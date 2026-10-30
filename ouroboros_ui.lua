@@ -37,6 +37,8 @@ Window = Library:CreateWindow({
 })
 
 local MainTab   = Window:CreateTab({ Name = "玩家",       Icon = "users" })
+local jwTab = Window:CreateTab({ Name = "改键位",     Icon = "keyboard" })
+local flupTab = Window:CreateTab({ Name = "防录屏设置选项",     Icon = "rbxassetid://7733655834" })
 local SpookyTab = Window:CreateTab({ Name = "万圣节",     Icon = "ghost" })
 local KeyTab    = Window:CreateTab({ Name = "刷钥匙",     Icon = "key" })
 local CrossTab  = Window:CreateTab({ Name = "准心",       Icon = "crosshair" })
@@ -254,7 +256,422 @@ PG_Main_R2:CreateButton({Name="空中定住",Callback=function()
         end
     end)
 end})
+-- ==========================================
+-- 改键位 Tab：极简物理拖拽 + 缩放 + 一键重置
+-- ==========================================
+local jw_Group = jwTab:AddLeftGroupbox({Name="按键拖拽控制", Icon="move"})
 
+local jw_active = false
+local jw_isDragging = false
+local jw_dragObj = nil
+local jw_startPos = nil
+local jw_touchStart = nil
+local jw_originalPos = {}
+local jw_highlight = nil
+
+-- ⭐ 选中 + 缩放状态
+local jw_selectedObj = nil
+local jw_selectedHL = nil
+local jw_originalSizes = {}
+local jw_objScales = {}
+local jw_scaleVal = 1.0
+
+-- 获取精准文件夹
+local function jw_getTouchProfiles()
+    local pg = LP:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    local screen = pg:FindFirstChild("InputButtonsScreen")
+    if not screen then return nil end
+    return screen:FindFirstChild("TouchProfiles")
+end
+
+-- ⭐ 清理所有高亮框
+local function jw_clearAllHighlights()
+    if jw_highlight then pcall(function() jw_highlight:Destroy() end); jw_highlight = nil end
+    if jw_selectedHL then pcall(function() jw_selectedHL:Destroy() end); jw_selectedHL = nil end
+    
+    local profiles = jw_getTouchProfiles()
+    if profiles then
+        for _, v in ipairs(profiles:GetDescendants()) do
+            if v:IsA("GuiObject") then
+                for _, c in ipairs(v:GetChildren()) do
+                    if c:IsA("UIStroke") and (c.Name == "__DragHL" or c.Name == "__SelHL") then
+                        pcall(function() c:Destroy() end)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- 砸碎所有布局限制，防止拖出边界就消失
+local function jw_breakConstraints(obj)
+    pcall(function()
+        local p = obj.Parent
+        while p and not p:IsA("ScreenGui") do
+            if p:IsA("GuiObject") then p.ClipsDescendants = false end
+            p = p.Parent
+        end
+        for _, child in ipairs(obj:GetChildren()) do
+            if child:IsA("UIAspectRatioConstraint") or child:IsA("UIListLayout") or child:IsA("UIPositionConstraint") then
+                child:Destroy()
+            end
+        end
+    end)
+end
+
+-- 找准按下的键
+local function jw_findButton(pos)
+    local profiles = jw_getTouchProfiles()
+    if not profiles then return nil end
+    for _, v in ipairs(profiles:GetDescendants()) do
+        if v:IsA("GuiObject") and v.Visible then
+            local ap, sz = v.AbsolutePosition, v.AbsoluteSize
+            if sz.X >= 20 and sz.Y >= 20 and sz.X <= 300 and sz.Y <= 300 then
+                if pos.X >= ap.X and pos.X <= ap.X + sz.X and pos.Y >= ap.Y and pos.Y <= ap.Y + sz.Y then
+                    return v
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- 选中高亮
+local function jw_selectObj(obj)
+    if jw_selectedHL then pcall(function() jw_selectedHL:Destroy() end); jw_selectedHL = nil end
+    jw_selectedObj = obj
+    if not obj then return end
+    if not jw_originalSizes[obj] then jw_originalSizes[obj] = obj.Size end
+    if not jw_objScales[obj] then jw_objScales[obj] = 1.0 end
+    jw_selectedHL = Instance.new("UIStroke", obj)
+    jw_selectedHL.Name = "__SelHL"
+    jw_selectedHL.Color = Color3.fromRGB(255, 200, 0)
+    jw_selectedHL.Thickness = 3
+    jw_selectedHL.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+end
+
+-- 应用缩放
+local function jw_applyScale(obj, scale)
+    if not obj or not obj.Parent then return end
+    if not jw_originalSizes[obj] then jw_originalSizes[obj] = obj.Size end
+    local o = jw_originalSizes[obj]
+    pcall(function()
+        obj.Size = UDim2.new(
+            o.X.Scale * scale, math.floor(o.X.Offset * scale + 0.5),
+            o.Y.Scale * scale, math.floor(o.Y.Offset * scale + 0.5)
+        )
+    end)
+end
+
+-- ⭐ 极致跟手：放在渲染帧里实时同步物理坐标
+RunService.RenderStepped:Connect(function()
+    if not jw_active or not jw_isDragging or not jw_dragObj or not jw_dragObj.Parent then return end
+    if not jw_touchStart or not jw_startPos then return end
+    
+    local currentTouch = UIS:GetMouseLocation()
+    local deltaX = currentTouch.X - jw_touchStart.X
+    local deltaY = currentTouch.Y - jw_touchStart.Y
+    
+    pcall(function()
+        jw_dragObj.Position = UDim2.new(
+            jw_startPos.X.Scale, jw_startPos.X.Offset + deltaX,
+            jw_startPos.Y.Scale, jw_startPos.Y.Offset + deltaY
+        )
+    end)
+end)
+
+-- ⭐ 触摸开始：精准识别你按下的键
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if not jw_active then return end
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local obj = jw_findButton(input.Position)
+        if obj then
+            jw_dragObj = obj
+            if not jw_originalPos[obj] then jw_originalPos[obj] = obj.Position end
+            jw_breakConstraints(obj)
+            jw_touchStart = input.Position
+            jw_startPos = obj.Position
+            jw_isDragging = true
+            
+            -- 绿框选中提示
+            if jw_highlight then jw_highlight:Destroy() end
+            jw_highlight = Instance.new("UIStroke", obj)
+            jw_highlight.Name = "__DragHL"
+            jw_highlight.Color = Color3.fromRGB(0, 255, 130)
+            jw_highlight.Thickness = 3
+            jw_highlight.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            
+            jw_selectObj(obj)
+        end
+    end
+end)
+
+-- ⭐ 松手结束
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if jw_isDragging then
+            if jw_highlight then jw_highlight:Destroy() jw_highlight = nil end
+            jw_isDragging = false
+            jw_dragObj = nil
+            jw_touchStart = nil
+            jw_startPos = nil
+        end
+    end
+end)
+
+-- ==================== Ouroboros 控件 ====================
+
+jw_Group:CreateToggle({
+    Name = "开启无延迟直接拖拽",
+    CurrentValue = false,
+    Flag = "JW_EnableDrag",
+    Callback = function(v)
+        jw_active = v
+        if v then
+            jw_clearAllHighlights()
+            N("拖拽", "已开启，点击按钮选中后可拖动滑块缩放")
+        else
+            if jw_highlight then jw_highlight:Destroy() jw_highlight = nil end
+            jw_isDragging = false
+            jw_dragObj = nil
+            jw_touchStart = nil
+            jw_startPos = nil
+            jw_selectObj(nil)
+            jw_clearAllHighlights()
+            N("拖拽", "已关闭，高亮已清除")
+        end
+    end,
+})
+
+jw_Group:CreateSlider({
+    Name = "选中按钮缩放倍率",
+    Range = {0.3, 3.0},
+    Increment = 0.05,
+    CurrentValue = 1.0,
+    Flag = "JW_Scale",
+    Callback = function(v)
+        jw_scaleVal = v
+        if jw_selectedObj and jw_selectedObj.Parent then
+            jw_objScales[jw_selectedObj] = v
+            jw_applyScale(jw_selectedObj, v)
+        end
+    end,
+})
+
+jw_Group:CreateButton({
+    Name = "恢复选中按钮原始大小",
+    Callback = function()
+        if not jw_selectedObj or not jw_selectedObj.Parent then
+            N("提示", "请先点击一个按钮选中它")
+            return
+        end
+        if jw_originalSizes[jw_selectedObj] then
+            pcall(function() jw_selectedObj.Size = jw_originalSizes[jw_selectedObj] end)
+        end
+        jw_objScales[jw_selectedObj] = 1.0
+        N("已恢复", "选中按钮已恢复原始大小")
+    end,
+})
+
+jw_Group:CreateButton({
+    Name = "取消选中",
+    Callback = function()
+        jw_selectObj(nil)
+    end,
+})
+
+jw_Group:CreateButton({
+    Name = "一键重置所有按键位置和大小",
+    Callback = function()
+        local count = 0
+        for obj, pos in pairs(jw_originalPos) do
+            if obj and obj.Parent then
+                pcall(function() obj.Position = pos end)
+                count = count + 1
+            end
+        end
+        for obj, sz in pairs(jw_originalSizes) do
+            if obj and obj.Parent then
+                pcall(function() obj.Size = sz end)
+            end
+        end
+        table.clear(jw_originalSizes)
+        table.clear(jw_objScales)
+        jw_scaleVal = 1.0
+        
+        if jw_highlight then jw_highlight:Destroy() jw_highlight = nil end
+        jw_isDragging = false
+        jw_dragObj = nil
+        jw_touchStart = nil
+        jw_startPos = nil
+        jw_selectObj(nil)
+        jw_clearAllHighlights()
+        
+        N("重置成功", "已恢复了 " .. tostring(count) .. " 个按键")
+    end,
+})
+-- ==========================================
+-- 防录屏设置选项 Tab
+-- ==========================================
+local PG_Flup_L = flupTab:AddLeftGroupbox({Name="防录屏与范围",Icon="shield"})
+local PG_Flup_R = flupTab:AddRightGroupbox({Name="参数与说明",Icon="move"})
+
+-- 1. 删除防录屏
+PG_Flup_L:CreateButton({
+    Name = "删除忍者图标和脚本",
+    Callback = function()
+        local CoreGui = game:GetService("CoreGui")
+        local targetHash = "fdcc4aea07a75898254f573dbd0c67061fc06e508fdd69b5dbfde0ba64913d0c"
+        local deleted = false
+
+        -- 第一层暴力搜索
+        for _, child in ipairs(CoreGui:GetChildren()) do
+            if string.find(child.Name, targetHash, 1, true) then
+                local ok = pcall(function() child:Destroy() end)
+                if ok then deleted = true end
+            end
+        end
+
+        -- 深度遍历兜底
+        if not deleted then
+            for _, v in ipairs(CoreGui:GetDescendants()) do
+                if string.find(v.Name, targetHash, 1, true) then
+                    pcall(function() v:Destroy() end)
+                    deleted = true
+                end
+            end
+        end
+
+        if deleted then
+            N("清理成功", "已删除目标核心文件夹", 3)
+        else
+            N("提示", "未找到该目标，可能已被清理", 3)
+        end
+    end,
+})
+
+-- 2. 范围逻辑 (透明版)
+local btHbSize = 8
+local btHbConn = nil
+local btCharConns = {} 
+
+local function btExpandPlayer(player)
+    if player == LP then return end
+    local char = player.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+    local hrpX = char:FindFirstChild("HumanoidRootPart")
+    if not hrpX then return end
+    
+    local size = math.clamp(btHbSize, 1, 100)
+    pcall(function()
+        hrpX.Size = Vector3.new(size, size, size)
+        hrpX.Transparency = 1             -- 完全透明，防视觉干扰
+        hrpX.Color = Color3.fromRGB(190, 190, 190)
+        hrpX.Material = Enum.Material.Neon
+        hrpX.CanCollide = false
+    end)
+end
+
+local function btResetPlayer(player)
+    if player == LP then return end 
+    local char = player.Character
+    if not char then return end
+    local hrpX = char:FindFirstChild("HumanoidRootPart")
+    if not hrpX then return end
+    pcall(function()
+        hrpX.Size = Vector3.new(2, 2, 1) 
+        hrpX.Transparency = 0             -- 恢复不透明
+        hrpX.Color = Color3.fromRGB(163, 162, 165)
+        hrpX.Material = Enum.Material.Plastic
+        hrpX.CanCollide = true
+    end)
+end
+
+local function btBindPlayer(player)
+    if player == LP then return end
+    if btCharConns[player] then
+        btCharConns[player]:Disconnect()
+        btCharConns[player] = nil
+    end
+    btCharConns[player] = player.CharacterAdded:Connect(function()
+        task.wait(1)
+        if btHbConn then
+            btExpandPlayer(player)
+        end
+    end)
+end
+
+-- 范围主开关
+PG_Flup_L:CreateToggle({
+    Name = "开启范围",
+    CurrentValue = false,
+    Flag = "Flup_BT_Enable",
+    Callback = function(state)
+        if state then
+            if btHbConn then btHbConn:Disconnect() end
+            for _, conn in pairs(btCharConns) do pcall(function() conn:Disconnect() end) end
+            table.clear(btCharConns)
+
+            btHbConn = RunService.Heartbeat:Connect(function()
+                for _, p in ipairs(Players:GetPlayers()) do
+                    btExpandPlayer(p)
+                end
+            end)
+
+            for _, player in ipairs(Players:GetPlayers()) do
+                btBindPlayer(player)
+            end
+            
+            if not _G._BTPlayerAddedConn then
+                _G._BTPlayerAddedConn = Players.PlayerAdded:Connect(function(p)
+                    if btHbConn then
+                        btBindPlayer(p)
+                    end
+                end)
+            end
+            N("范围", "已开启，敌人碰撞箱已隐形放大", 3)
+        else
+            if btHbConn then
+                btHbConn:Disconnect()
+                btHbConn = nil
+            end
+            for _, conn in pairs(btCharConns) do pcall(function() conn:Disconnect() end) end
+            table.clear(btCharConns)
+            
+            if _G._BTPlayerAddedConn then
+                _G._BTPlayerAddedConn:Disconnect()
+                _G._BTPlayerAddedConn = nil
+            end
+
+            for _, p in ipairs(Players:GetPlayers()) do
+                btResetPlayer(p)
+            end
+            N("范围", "已关闭并恢复敌人模型", 3)
+        end
+    end,
+})
+
+-- 3. 右侧参数与说明
+PG_Flup_R:CreateSlider({
+    Name = "范围大小",
+    Range = {1, 100},
+    Increment = 1,
+    CurrentValue = 8,
+    Flag = "Flup_BT_Size",
+    Callback = function(value) 
+        btHbSize = value 
+    end,
+})
+
+PG_Flup_R:CreateButton({
+    Name = "功能说明",
+    Callback = function()
+        N("防录屏/范围说明", "1. 删除防录屏用于清理本地核心脚本。\n2. 开启范围后，敌人碰撞箱隐形放大，关闭后需过几秒恢复正常。", 6)
+    end,
+})
 -- ==========================================
 -- 万圣节 Tab（左右）
 -- ==========================================
@@ -1110,10 +1527,14 @@ do
         RunService.RenderStepped:Connect(function() pcall(upCir) end)
         local function camp(p) if not p then return nil end; local t=p:GetAttribute("currentTeam"); if type(t)=="string" then return t end; if p.Team then return p.Team.Name end; return nil end
         local function isTeam(p) if p==LP then return true end; local a,b=camp(LP),camp(p); if a==nil or b==nil then return p.Team~=nil and p.Team==LP.Team end; return a==b end
+
+        -- ⭐ 白名单最高优先：勾上 = 直接跳过，不瞄
         local function allow(p)
+            if _G.WL and _G.WL[p.Name] == true then return false end
             if A.Camp~="全部" then local c=camp(p); if A.Camp=="仅警察" and c~="police" then return false end; if A.Camp=="仅帮派" and c~="syndicate" then return false end; if A.Camp=="仅平民" and c~="civilian" then return false end; return true end
             if A.IgTeam and isTeam(p) then return false end; return true
         end
+
         local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=true
         local function wall(p)
             if not p or not p.Parent then return true end
@@ -1169,9 +1590,67 @@ do
         PG_Aim_R:CreateToggle({Name="忽略队友(仅全部)",CurrentValue=true,Flag="AimIgTeam",Callback=function(v) A.IgTeam=v end})
         PG_Aim_R:CreateDropdown({Name="只吸附阵营",Options={"全部","仅警察","仅帮派","仅平民"},CurrentOption="全部",AllowNone=false,Flag="AimCamp",Callback=function(v) A.Camp=v end})
         PG_Aim_R:CreateToggle({Name="掩体检测",CurrentValue=true,Flag="AimWall",Callback=function(v) A.Wall=v end})
+
+        -- ⭐ 白名单（勾上 = 不瞄准）
+        local PG_Aim_WL = AimTab:AddRightGroupbox({Name="白名单",Icon="shield"})
+        _G.WL = _G.WL or {}
+        local AimWL_Created = {}
+
+        local function AimWL_AddFor(playerName)
+            if AimWL_Created[playerName] then return end
+            local isAlreadyWL = (_G.WL and _G.WL[playerName] == true)
+            
+            local t = PG_Aim_WL:CreateToggle({
+                Name = playerName,
+                CurrentValue = isAlreadyWL,
+                Flag = "AimWL_" .. playerName,
+                Callback = function(v)
+                    _G.WL = _G.WL or {}
+                    if v then
+                        _G.WL[playerName] = true
+                    else
+                        _G.WL[playerName] = nil
+                    end
+                end
+            })
+            AimWL_Created[playerName] = t
+        end
+
+        local function AimWL_RemoveFor(playerName)
+            local t = AimWL_Created[playerName]
+            if t then
+                pcall(function() t:Destroy() end)
+                AimWL_Created[playerName] = nil
+            end
+            if _G.WL then _G.WL[playerName] = nil end
+        end
+
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP then AimWL_AddFor(p.Name) end
+        end
+
+        Players.PlayerAdded:Connect(function(p)
+            if p ~= LP then
+                task.wait(0.3)
+                AimWL_AddFor(p.Name)
+            end
+        end)
+
+        Players.PlayerRemoving:Connect(function(p)
+            if p ~= LP then AimWL_RemoveFor(p.Name) end
+        end)
+
+        PG_Aim_WL:CreateButton({
+            Name = "刷新白名单列表",
+            Callback = function()
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LP then AimWL_AddFor(p.Name) end
+                end
+                N("白名单", "已刷新")
+            end
+        })
     end
 end
-
 -- ==========================================
 -- 范围 Tab（左右）
 -- ==========================================
