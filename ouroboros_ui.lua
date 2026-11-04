@@ -1,16 +1,21 @@
-do
-    pcall(function() print=function() end end)
-    pcall(function() warn=function() end end)
-end
-if not game:IsLoaded() then game.Loaded:Wait() end
-
 local SCRIPT_NAME = "港猫的通缉Wanted"
 local SCRIPT_VERSION = "v4.0"
 
+local imgUrl = "https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/6979f443-2573-4441-a216-64c1eb2ee5df.png"
+local fileName = "ouro_toggle_img.png"
+local customIcon = "rbxassetid://73134605071861"
+
+if writefile and getcustomasset then
+    pcall(function()
+        if isfile(fileName) then delfile(fileName) end
+        writefile(fileName, game:HttpGet(imgUrl))
+        customIcon = getcustomasset(fileName)
+    end)
+end
+
 local Library, Window
 local ok, result = pcall(function()
-    -- 在你的脚本大概第 7 行
-local url = "https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/ouroboros_ui.lua?cb=" .. tostring(os.time())
+    local url = "https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/ouroboros_ui.lua?cb=" .. tostring(os.time())
     local chunk, e = loadstring(game:HttpGet(url))
     if type(chunk) ~= "function" then error("lib compile: "..tostring(e),0) end
     local lib = chunk()
@@ -26,7 +31,14 @@ Window = Library:CreateWindow({
     LoadingSubtitle = SCRIPT_VERSION,
     ToggleUIKeybind = "F",
     ConfigurationSaving = { Enabled = true, FolderName = "WantedUI", FileName = "default" },
-    ToggleButton = { Platform = "Mobile" },
+    
+    ToggleButton = { 
+        Platform = "Mobile", 
+        Icon = customIcon,
+        Image = customIcon,
+        IconImage = customIcon
+    },
+    
     Home = {
         Title = "欢迎使用 " .. SCRIPT_NAME,
         Tier = SCRIPT_VERSION,
