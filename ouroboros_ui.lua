@@ -44,7 +44,7 @@ Window = Library:CreateWindow({
         Tier = SCRIPT_VERSION,
         Discord = "QQ售后1109337389",
         Website = "https://t.me/gangmao0259",
-        Stats = { "在线人数", "会话时长", "帧率", "网络延迟" },
+        Stats = { "在线人数", "会话时长", "FPS", "Ping" },
     },
 })
 
