@@ -166,7 +166,28 @@ PG_Main_L2:CreateToggle({Name="穿墙",CurrentValue=false,Flag="NoClip",Callback
         local c=LP.Character; if c then for _,p in ipairs(c:GetChildren()) do if p:IsA("BasePart") then p.CanCollide=true end end end
     end
 end})
-
+-- ⭐ 新增：高跳 (防检测·无下压)
+local isHighJump = false
+local highJumpVel = 300
+UIS.JumpRequest:Connect(function()
+    if isHighJump then
+        local c = LP.Character
+        if c then
+            local h = c:FindFirstChildOfClass("Humanoid")
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+            if h and hrp then
+                h:ChangeState(Enum.HumanoidStateType.Jumping)
+                hrp.AssemblyLinearVelocity = Vector3.new(
+                    hrp.AssemblyLinearVelocity.X,
+                    highJumpVel,
+                    hrp.AssemblyLinearVelocity.Z
+                )
+            end
+        end
+    end
+end)
+PG_Main_L2:CreateToggle({Name="高跳",CurrentValue=false,Flag="HighJump",Callback=function(v) isHighJump=v end})
+PG_Main_L2:CreateSlider({Name="跳跃力度",Range={40,400},Increment=5,CurrentValue=300,Flag="JumpVel",Callback=function(v) highJumpVel=v end})
 local PG_Main_R1 = MainTab:AddRightGroupbox({Name="飞行模式",Icon="wind"})
 local Flying,FlySpeed=false,150
 local CAO,CLV,CAT,FConn
@@ -239,11 +260,20 @@ PG_Main_R2:CreateToggle({Name="修改别人头部大小",CurrentValue=false,Flag
 end})
 PG_Main_R2:CreateSlider({Name="头部尺寸",Range={1,5000},Increment=1,CurrentValue=1,Flag="HeadSize",Callback=function(v) HS.Size=v end})
 
-PG_Main_R2:CreateButton({Name="取消坠落状态",Callback=function()
-    local m=getrawmetatable(game); local o=m.__index; setreadonly(m,false)
-    m.__index=newcclosure(function(s,k) if (k=="AssemblyLinearVelocity" or k=="Velocity") and s:IsA("BasePart") then return Vector3.new(0,0,0) end return o(s,k) end)
-    setreadonly(m,true)
-end})
+PG_Main_R2:CreateToggle({
+    Name = "取消坠落状态",
+    CurrentValue = false,
+    Flag = "AntiFall",
+    Callback = function(v)
+        HV = v  -- 直接使用脚本最顶部定义的那个防检测变量
+        
+        if v then
+            N("防摔落", "已开启")
+        else
+            N("防摔落", "已关闭")
+        end
+    end
+})
 PG_Main_R2:CreateButton({Name="踏空行走",Callback=function() loadstring(game:HttpGet('https://raw.githubusercontent.com/GhostPlayer352/Test4/main/Float'))() end})
 
 PG_Main_R2:CreateButton({Name="空中定住",Callback=function()
