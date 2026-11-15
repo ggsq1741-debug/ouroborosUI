@@ -50,6 +50,7 @@ Window = Library:CreateWindow({
 
 local MainTab   = Window:CreateTab({ Name = "玩家",       Icon = "users" })
 local flupTab = Window:CreateTab({ Name = "防录屏设置选项",     Icon = "rbxassetid://7733655834" })
+local qiangTab = Window:CreateTab({ Name = "枪无后座",     Icon = "rbxassetid://140713420056179" })
 local CrossTab  = Window:CreateTab({ Name = "准心",       Icon = "crosshair" })
 local MusicTab  = Window:CreateTab({ Name = "音乐",       Icon = "music" })
 local SwingTab  = Window:CreateTab({ Name = "甩飞",       Icon = "wind" })
@@ -121,7 +122,7 @@ end
 
 Library:Notify({Title="问题",Content="有问题bug联系作者",Type="Info",Duration=20})
 Library:Notify({Title="纸飞机",Content="@you25801",Type="Info",Duration=60})
-Library:Notify({Title="更新",Content="万圣节功能已加",Type="Success",Duration=15})
+Library:Notify({Title="更新",Content="添加无后座诬陷有点4妈后面悄悄更新",Type="Success",Duration=15})
 
 -- ==========================================
 -- 玩家 Tab（左右均分）
@@ -456,7 +457,64 @@ PG_Flup_R:CreateButton({
         N("防录屏/范围说明", "1. 删除防录屏用于清理本地核心脚本。\n2. 开启范围后，敌人碰撞箱隐形放大，关闭后需过几秒恢复正常。", 6)
     end,
 })
+-- 枪无后座 Tab (极简开关版)
+local PG_Qiang_L = qiangTab:AddLeftGroupbox({Name="无后座",Icon="crosshair"})
+local gunMods, gunOrig, isNoRecoil = {}, {}, false
 
+local function unfreeze(t)
+    if type(t) ~= "table" then return end
+    if setreadonly then pcall(setreadonly, t, false) end
+    local mt = getrawmetatable(t)
+    if mt and mt.__newindex then pcall(setreadonly, mt, false) end
+    for _, v in pairs(t) do if type(v) == "table" then unfreeze(v) end end
+end
+
+task.spawn(function()
+    local base = RS:FindFirstChild("Shared")
+    if base then base = base:FindFirstChild("Wanted") end
+    if base then base = base:FindFirstChild("Indicies") end
+    if base then base = base:FindFirstChild("Objects") end
+    if base then base = base:FindFirstChild("Guns") end
+    if base then
+        for _, mod in pairs(base:GetDescendants()) do
+            if mod:IsA("ModuleScript") then
+                local ok, data = pcall(require, mod)
+                if ok and type(data) == "table" and data.name and data.recoil then
+                    table.insert(gunMods, data)
+                    gunOrig[data.name] = { recoil = table.clone(data.recoil), aim = table.clone(data.aim or {}) }
+                end
+            end
+        end
+    end
+end)
+
+PG_Qiang_L:CreateToggle({
+    Name = "开启无后座",
+    CurrentValue = false,
+    Callback = function(v)
+        isNoRecoil = v
+        for _, data in ipairs(gunMods) do
+            unfreeze(data)
+            pcall(function()
+                if v then
+                    for k, num in pairs(data.recoil) do
+                        if type(num) == "number" then data.recoil[k] = 0.0001 end
+                    end
+                    if data.aim and data.aim.spreadAngle then data.aim.spreadAngle = 0.0001 end
+                else
+                    local orig = gunOrig[data.name]
+                    if orig then
+                        for k, num in pairs(orig.recoil) do data.recoil[k] = num end
+                        if data.aim and orig.aim then
+                            for k, num in pairs(orig.aim) do data.aim[k] = num end
+                        end
+                    end
+                end
+            end)
+        end
+        N("无后座", v and "已开启" or "已还原", 3)
+    end
+})
 -- ==========================================
 -- 准心 Tab（左右）
 -- ==========================================
