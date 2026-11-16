@@ -491,6 +491,7 @@ end)
 PG_Qiang_L:CreateToggle({
     Name = "开启无后座",
     CurrentValue = false,
+    Flag = "NoRecoil",
     Callback = function(v)
         isNoRecoil = v
         for _, data in ipairs(gunMods) do
