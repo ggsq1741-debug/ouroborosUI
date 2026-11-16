@@ -1,5 +1,5 @@
 local SCRIPT_NAME = "港猫的通缉Wanted"
-local SCRIPT_VERSION = "v4.0"
+local SCRIPT_VERSION = "v4.1"
 
 local imgUrl = "https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/6979f443-2573-4441-a216-64c1eb2ee5df.png"
 local fileName = "ouro_toggle_img.png"
@@ -31,14 +31,7 @@ Window = Library:CreateWindow({
     LoadingSubtitle = SCRIPT_VERSION,
     ToggleUIKeybind = "F",
     ConfigurationSaving = { Enabled = true, FolderName = "WantedUI", FileName = "default" },
-    
-    ToggleButton = { 
-        Platform = "Mobile", 
-        Icon = customIcon,
-        Image = customIcon,
-        IconImage = customIcon
-    },
-    
+    ToggleButton = { Platform = "Mobile", Icon = customIcon, Image = customIcon, IconImage = customIcon },
     Home = {
         Title = "欢迎使用 " .. SCRIPT_NAME,
         Tier = SCRIPT_VERSION,
@@ -77,16 +70,24 @@ local LP=Players.LocalPlayer
 
 local function N(t,c,d) Library:Notify({Title=t or "通知",Content=c or "",Type="Info",Duration=d or 3}) end
 
--- 防检测 Hook
-local HV=false
+-- ==========================================
+-- 合并的单层 meta hook
+-- ==========================================
+local BLOCK_VEL, BLOCK_FLY = false, false
 do
-    local m=getrawmetatable(game); local o=m.__index
-    setreadonly(m,false)
-    m.__index=newcclosure(function(s,k)
-        if HV and (k=="AssemblyLinearVelocity" or k=="Velocity") and s:IsA("BasePart") then return Vector3.new(0,0,0) end
-        return o(s,k)
+    local m = getrawmetatable(game)
+    local o = m.__index
+    setreadonly(m, false)
+    m.__index = newcclosure(function(s, k)
+        if (BLOCK_VEL or BLOCK_FLY)
+            and (k == "AssemblyLinearVelocity" or k == "Velocity")
+            and typeof(s) == "Instance"
+            and s:IsA("BasePart") then
+            return Vector3.zero
+        end
+        return o(s, k)
     end)
-    setreadonly(m,true)
+    setreadonly(m, true)
 end
 
 -- 目标玩家加入提示
@@ -122,10 +123,10 @@ end
 
 Library:Notify({Title="问题",Content="有问题bug联系作者",Type="Info",Duration=20})
 Library:Notify({Title="纸飞机",Content="@you25801",Type="Info",Duration=60})
-Library:Notify({Title="更新",Content="添加无后座诬陷有点4妈后面悄悄更新",Type="Success",Duration=15})
+Library:Notify({Title="更新",Content="性能优化 + 合并hook + 帧率无关",Type="Success",Duration=15})
 
 -- ==========================================
--- 玩家 Tab（左右均分）
+-- 玩家 Tab
 -- ==========================================
 local PG_Main_L1 = MainTab:AddLeftGroupbox({Name="联系信息",Icon="info"})
 PG_Main_L1:CreateButton({Name="查看联系方式",Callback=function() Library:Notify({Title="联系方式",Content="QQ：1109337389\ndc：https://discord.gg/rEAd5RdNe",Type="Info",Duration=15}) end})
@@ -136,20 +137,34 @@ local function updChar()
     local c=LP.Character; local h=c and c:FindFirstChildOfClass("Humanoid")
     if speedConn then speedConn:Disconnect(); speedConn=nil end
     if not h or curSpeed<=1 then return end
-    speedConn=RunService.Heartbeat:Connect(function()
-        if not LP.Character then speedConn:Disconnect(); speedConn=nil; return end
-        local hh=LP.Character.Humanoid
-        if hh.MoveDirection.Magnitude>0 then LP.Character:TranslateBy(hh.MoveDirection*curSpeed/10) end
+    speedConn=RunService.Heartbeat:Connect(function(dt)
+        local cc=LP.Character; if not cc then return end
+        local hh=cc:FindFirstChildOfClass("Humanoid")
+        if hh and hh.MoveDirection.Magnitude>0 then cc:TranslateBy(hh.MoveDirection*curSpeed*dt) end
     end)
 end
 LP.CharacterAdded:Connect(updChar); task.spawn(updChar)
 PG_Main_L2:CreateSlider({Name="超级快跑",Range={1,200},Increment=1,CurrentValue=1,Flag="SuperRun",Callback=function(v) curSpeed=v; updChar() end})
 
-local isInfJump=false
+-- 无限跳 + 高跳合并一个 JumpRequest
+local isInfJump,isHighJump=false,false
+local highJumpVel=300
 UIS.JumpRequest:Connect(function()
-    if isInfJump then local c=LP.Character; if c then local h=c:FindFirstChildOfClass("Humanoid"); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end end
+    local c=LP.Character; if not c then return end
+    local h=c:FindFirstChildOfClass("Humanoid"); if not h then return end
+    if isHighJump then
+        local hrp=c:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            h:ChangeState(Enum.HumanoidStateType.Jumping)
+            hrp.AssemblyLinearVelocity=Vector3.new(hrp.AssemblyLinearVelocity.X,highJumpVel,hrp.AssemblyLinearVelocity.Z)
+        end
+    elseif isInfJump then
+        h:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
 end)
 PG_Main_L2:CreateToggle({Name="无限跳",CurrentValue=false,Flag="InfJump",Callback=function(v) isInfJump=v end})
+PG_Main_L2:CreateToggle({Name="高跳",CurrentValue=false,Flag="HighJump",Callback=function(v) isHighJump=v end})
+PG_Main_L2:CreateSlider({Name="跳跃力度",Range={40,400},Increment=5,CurrentValue=300,Flag="JumpVel",Callback=function(v) highJumpVel=v end})
 
 local clipConn=nil
 PG_Main_L2:CreateToggle({Name="穿墙",CurrentValue=false,Flag="NoClip",Callback=function(v)
@@ -163,34 +178,10 @@ PG_Main_L2:CreateToggle({Name="穿墙",CurrentValue=false,Flag="NoClip",Callback
         local c=LP.Character; if c then for _,p in ipairs(c:GetChildren()) do if p:IsA("BasePart") then p.CanCollide=true end end end
     end
 end})
--- ⭐ 新增：高跳 (防检测·无下压)
-local isHighJump = false
-local highJumpVel = 300
-UIS.JumpRequest:Connect(function()
-    if isHighJump then
-        local c = LP.Character
-        if c then
-            local h = c:FindFirstChildOfClass("Humanoid")
-            local hrp = c:FindFirstChild("HumanoidRootPart")
-            if h and hrp then
-                h:ChangeState(Enum.HumanoidStateType.Jumping)
-                hrp.AssemblyLinearVelocity = Vector3.new(
-                    hrp.AssemblyLinearVelocity.X,
-                    highJumpVel,
-                    hrp.AssemblyLinearVelocity.Z
-                )
-            end
-        end
-    end
-end)
-PG_Main_L2:CreateToggle({Name="高跳",CurrentValue=false,Flag="HighJump",Callback=function(v) isHighJump=v end})
-PG_Main_L2:CreateSlider({Name="跳跃力度",Range={40,400},Increment=5,CurrentValue=300,Flag="JumpVel",Callback=function(v) highJumpVel=v end})
+
 local PG_Main_R1 = MainTab:AddRightGroupbox({Name="飞行模式",Icon="wind"})
 local Flying,FlySpeed=false,150
 local CAO,CLV,CAT,FConn
-local mtf=getrawmetatable(game); local ofi=mtf.__index; setreadonly(mtf,false)
-mtf.__index=newcclosure(function(s,k) if Flying and (k=="AssemblyLinearVelocity" or k=="Velocity") and s:IsA("BasePart") then return Vector3.new(0,0,0) end return ofi(s,k) end)
-setreadonly(mtf,true)
 local function getCM() return require(LP:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"):WaitForChild("ControlModule")) end
 local function startFly()
     if Flying then return end
@@ -200,7 +191,7 @@ local function startFly()
     CAO=Instance.new("AlignOrientation"); CAO.Mode=Enum.OrientationAlignmentMode.OneAttachment; CAO.RigidityEnabled=true
     CAO.MaxTorque=Vector3.new(9e9,9e9,9e9); CAO.CFrame=hrp.CFrame; CAO.Attachment0=at; CAO.Parent=mp
     CLV=Instance.new("LinearVelocity"); CLV.VectorVelocity=Vector3.new(0,0,0); CLV.MaxForce=9e9; CLV.Attachment0=at; CLV.Parent=mp
-    CAT=at; Flying=true
+    CAT=at; Flying=true; BLOCK_FLY=true
     pcall(function() hrp:SetNetworkOwner(LP) end)
     local cm=getCM()
     FConn=RunService.Heartbeat:Connect(function()
@@ -221,7 +212,7 @@ local function startFly()
     end)
 end
 local function stopFly()
-    if not Flying then return end; Flying=false
+    if not Flying then return end; Flying=false; BLOCK_FLY=false
     if FConn then FConn:Disconnect(); FConn=nil end
     local c=LP.Character; if c and c:FindFirstChild("Humanoid") then c.Humanoid.PlatformStand=false end
     if CAO then CAO:Destroy(); CAO=nil end
@@ -239,39 +230,54 @@ local function StartSpin()
         if not SpinOn then return end
         local c=LP.Character; if not c then return end
         local h=c:FindFirstChild("HumanoidRootPart"); if not h then return end
-        h.CFrame=h.CFrame*CFrame.Angles(0,math.rad(SpinSpeed)*dt*60,0)
+        h.CFrame=h.CFrame*CFrame.Angles(0,math.rad(SpinSpeed)*dt,0)
     end)
 end
 LP.CharacterAdded:Connect(function() if SpinOn then task.wait(0.5); StartSpin() end end)
 PG_Main_R2:CreateToggle({Name="人物自转",CurrentValue=false,Flag="Spin",Callback=function(v) SpinOn=v; if v then StartSpin() else if SpinConn then SpinConn:Disconnect(); SpinConn=nil end end end})
 PG_Main_R2:CreateSlider({Name="旋转速度",Range={1,200},Increment=5,CurrentValue=5,Flag="SpinSpeed",Callback=function(v) SpinSpeed=v end})
 
-local HS={Enabled=false,Size=1,Conn=nil}
+-- 头部缩放：CharacterAdded 绑定，设一次，不每帧写
+local HS={Enabled=false,Size=1,Orig={}}
+local function applyHead(p)
+    if p==LP then return end
+    local c=p.Character; if not c then return end
+    local hd=c:FindFirstChild("Head"); if not hd then return end
+    if HS.Orig[p]==nil then HS.Orig[p]=hd.Size end
+    local s=HS.Size
+    pcall(function() hd.Size=Vector3.new(s,s,s); hd.CanCollide=false end)
+end
+local function restoreHead(p)
+    local c=p.Character; if not c then return end
+    local hd=c:FindFirstChild("Head"); if not hd then return end
+    local o=HS.Orig[p]
+    if o then pcall(function() hd.Size=o end) end
+end
+local function bindHead(p)
+    if p==LP then return end
+    p.CharacterAdded:Connect(function() task.wait(0.5); if HS.Enabled then applyHead(p) end end)
+end
+for _,p in ipairs(Players:GetPlayers()) do if p~=LP then bindHead(p) end end
+Players.PlayerAdded:Connect(bindHead)
 PG_Main_R2:CreateToggle({Name="修改别人头部大小",CurrentValue=false,Flag="HeadScaler",Callback=function(v)
     HS.Enabled=v
-    if HS.Conn then HS.Conn:Disconnect(); HS.Conn=nil end
-    if not v then for _,p in ipairs(Players:GetPlayers()) do if p~=LP and p.Character and p.Character:FindFirstChild("Head") then pcall(function() p.Character.Head.Size=Vector3.new(1,1,1) end) end end; return end
-    HS.Conn=RunService.Heartbeat:Connect(function()
-        for _,p in ipairs(Players:GetPlayers()) do if p~=LP and p.Character and p.Character:FindFirstChild("Head") then pcall(function() p.Character.Head.Size=Vector3.new(HS.Size,HS.Size,HS.Size); p.Character.Head.CanCollide=false end) end end
-    end)
+    if not v then for _,p in ipairs(Players:GetPlayers()) do restoreHead(p) end; return end
+    for _,p in ipairs(Players:GetPlayers()) do applyHead(p) end
 end})
-PG_Main_R2:CreateSlider({Name="头部尺寸",Range={1,5000},Increment=1,CurrentValue=1,Flag="HeadSize",Callback=function(v) HS.Size=v end})
+PG_Main_R2:CreateSlider({Name="头部尺寸",Range={1,100},Increment=1,CurrentValue=1,Flag="HeadSize",Callback=function(v)
+    HS.Size=v; if HS.Enabled then for _,p in ipairs(Players:GetPlayers()) do applyHead(p) end end
+end})
 
 PG_Main_R2:CreateToggle({
     Name = "取消坠落状态",
     CurrentValue = false,
     Flag = "AntiFall",
     Callback = function(v)
-        HV = v  -- 直接使用脚本最顶部定义的那个防检测变量
-        
-        if v then
-            N("防摔落", "已开启")
-        else
-            N("防摔落", "已关闭")
-        end
+        BLOCK_VEL = v
+        N("防摔落", v and "已开启" or "已关闭")
     end
 })
-PG_Main_R2:CreateButton({Name="踏空行走",Callback=function() loadstring(game:HttpGet('https://raw.githubusercontent.com/GhostPlayer352/Test4/main/Float'))() end})
+PG_Main_R2:CreateButton({Name="踏空行走",Callback=function() task.spawn(function() loadstring(game:HttpGet('https://raw.githubusercontent.com/GhostPlayer352/Test4/main/Float'))() end) end})
 
 PG_Main_R2:CreateButton({Name="空中定住",Callback=function()
     local fz,ly,ch,rt=false,nil,nil,nil
@@ -302,23 +308,18 @@ end})
 local PG_Flup_L = flupTab:AddLeftGroupbox({Name="防录屏与范围",Icon="shield"})
 local PG_Flup_R = flupTab:AddRightGroupbox({Name="参数与说明",Icon="move"})
 
--- 1. 删除防录屏
 PG_Flup_L:CreateButton({
     Name = "删除忍者图标和脚本",
     Callback = function()
         local CoreGui = game:GetService("CoreGui")
         local targetHash = "fdcc4aea07a75898254f573dbd0c67061fc06e508fdd69b5dbfde0ba64913d0c"
         local deleted = false
-
-        -- 第一层暴力搜索
         for _, child in ipairs(CoreGui:GetChildren()) do
             if string.find(child.Name, targetHash, 1, true) then
                 local ok = pcall(function() child:Destroy() end)
                 if ok then deleted = true end
             end
         end
-
-        -- 深度遍历兜底
         if not deleted then
             for _, v in ipairs(CoreGui:GetDescendants()) do
                 if string.find(v.Name, targetHash, 1, true) then
@@ -327,137 +328,93 @@ PG_Flup_L:CreateButton({
                 end
             end
         end
-
-        if deleted then
-            N("清理成功", "已删除目标核心文件夹", 3)
-        else
-            N("提示", "未找到该目标，可能已被清理", 3)
-        end
+        if deleted then N("清理成功", "已删除目标核心文件夹", 3)
+        else N("提示", "未找到该目标，可能已被清理", 3) end
     end,
 })
 
--- 2. 范围逻辑 (透明版)
-local btHbSize = 8
-local btHbConn = nil
-local btCharConns = {} 
-
-local function btExpandPlayer(player)
-    if player == LP then return end
-    local char = player.Character
-    if not char then return end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
-    local hrpX = char:FindFirstChild("HumanoidRootPart")
-    if not hrpX then return end
-    
-    local size = math.clamp(btHbSize, 1, 100)
-    pcall(function()
-        hrpX.Size = Vector3.new(size, size, size)
-        hrpX.Transparency = 1             -- 完全透明，防视觉干扰
-        hrpX.Color = Color3.fromRGB(190, 190, 190)
-        hrpX.Material = Enum.Material.Neon
-        hrpX.CanCollide = false
-    end)
+-- ==========================================
+-- 统一范围模块（防录屏 Tab 和 Range Tab 共用）
+-- ==========================================
+local RangeModule = {Enabled=false, Size=8, On=false}
+local rangeConns={}
+local function applyRangePart(hrp, s)
+    hrp.Size=Vector3.new(s,s,s)
+    hrp.Transparency=0.85
+    hrp.Color=Color3.fromRGB(190,190,190)
+    hrp.Material=Enum.Material.Neon
+    hrp.CanCollide=false
 end
-
-local function btResetPlayer(player)
-    if player == LP then return end 
-    local char = player.Character
-    if not char then return end
-    local hrpX = char:FindFirstChild("HumanoidRootPart")
-    if not hrpX then return end
-    pcall(function()
-        hrpX.Size = Vector3.new(2, 2, 1) 
-        hrpX.Transparency = 0             -- 恢复不透明
-        hrpX.Color = Color3.fromRGB(163, 162, 165)
-        hrpX.Material = Enum.Material.Plastic
-        hrpX.CanCollide = true
-    end)
+local function resetRangePart(hrp)
+    hrp.Size=Vector3.new(2,2,1)
+    hrp.Transparency=0
+    hrp.Color=Color3.fromRGB(163,162,165)
+    hrp.Material=Enum.Material.Plastic
+    hrp.CanCollide=true
 end
-
-local function btBindPlayer(player)
-    if player == LP then return end
-    if btCharConns[player] then
-        btCharConns[player]:Disconnect()
-        btCharConns[player] = nil
+local function applyRangeAll()
+    local s=math.clamp(RangeModule.Size,1,100)
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LP and p.Character then
+            local h=p.Character:FindFirstChild("HumanoidRootPart")
+            if h then pcall(applyRangePart,h,s) end
+        end
     end
-    btCharConns[player] = player.CharacterAdded:Connect(function()
+end
+local function resetRangeAll()
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LP and p.Character then
+            local h=p.Character:FindFirstChild("HumanoidRootPart")
+            if h then pcall(resetRangePart,h) end
+        end
+    end
+end
+local function bindRangePlayer(p)
+    if p==LP then return end
+    if rangeConns[p] then rangeConns[p]:Disconnect() end
+    rangeConns[p]=p.CharacterAdded:Connect(function()
         task.wait(1)
-        if btHbConn then
-            btExpandPlayer(player)
+        if RangeModule.Enabled then
+            local h=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if h then pcall(applyRangePart,h,math.clamp(RangeModule.Size,1,100)) end
         end
     end)
 end
+for _,p in ipairs(Players:GetPlayers()) do bindRangePlayer(p) end
+Players.PlayerAdded:Connect(bindRangePlayer)
+local function setRange(on)
+    if on==RangeModule.Enabled then return end
+    RangeModule.Enabled=on
+    if on then applyRangeAll() else resetRangeAll() end
+end
 
--- 范围主开关
 PG_Flup_L:CreateToggle({
     Name = "开启范围",
     CurrentValue = false,
     Flag = "Flup_BT_Enable",
     Callback = function(state)
-        if state then
-            if btHbConn then btHbConn:Disconnect() end
-            for _, conn in pairs(btCharConns) do pcall(function() conn:Disconnect() end) end
-            table.clear(btCharConns)
-
-            btHbConn = RunService.Heartbeat:Connect(function()
-                for _, p in ipairs(Players:GetPlayers()) do
-                    btExpandPlayer(p)
-                end
-            end)
-
-            for _, player in ipairs(Players:GetPlayers()) do
-                btBindPlayer(player)
-            end
-            
-            if not _G._BTPlayerAddedConn then
-                _G._BTPlayerAddedConn = Players.PlayerAdded:Connect(function(p)
-                    if btHbConn then
-                        btBindPlayer(p)
-                    end
-                end)
-            end
-            N("范围", "已开启，敌人碰撞箱已隐形放大", 3)
-        else
-            if btHbConn then
-                btHbConn:Disconnect()
-                btHbConn = nil
-            end
-            for _, conn in pairs(btCharConns) do pcall(function() conn:Disconnect() end) end
-            table.clear(btCharConns)
-            
-            if _G._BTPlayerAddedConn then
-                _G._BTPlayerAddedConn:Disconnect()
-                _G._BTPlayerAddedConn = nil
-            end
-
-            for _, p in ipairs(Players:GetPlayers()) do
-                btResetPlayer(p)
-            end
-            N("范围", "已关闭并恢复敌人模型", 3)
-        end
+        setRange(state)
+        if state then N("范围","已开启",3) else N("范围","已关闭",3) end
     end,
 })
-
--- 3. 右侧参数与说明
 PG_Flup_R:CreateSlider({
     Name = "范围大小",
-    Range = {1, 100},
-    Increment = 1,
-    CurrentValue = 8,
-    Flag = "Flup_BT_Size",
-    Callback = function(value) 
-        btHbSize = value 
+    Range = {1, 100}, Increment = 1, CurrentValue = 8, Flag = "Flup_BT_Size",
+    Callback = function(value)
+        RangeModule.Size = value
+        if RangeModule.Enabled then applyRangeAll() end
     end,
 })
-
 PG_Flup_R:CreateButton({
     Name = "功能说明",
     Callback = function()
         N("防录屏/范围说明", "1. 删除防录屏用于清理本地核心脚本。\n2. 开启范围后，敌人碰撞箱隐形放大，关闭后需过几秒恢复正常。", 6)
     end,
 })
--- 枪无后座 Tab (极简开关版)
+
+-- ==========================================
+-- 枪无后座 Tab
+-- ==========================================
 local PG_Qiang_L = qiangTab:AddLeftGroupbox({Name="无后座",Icon="crosshair"})
 local gunMods, gunOrig, isNoRecoil = {}, {}, false
 
@@ -516,8 +473,9 @@ PG_Qiang_L:CreateToggle({
         N("无后座", v and "已开启" or "已还原", 3)
     end
 })
+
 -- ==========================================
--- 准心 Tab（左右）
+-- 准心 Tab（缓存 UIStroke，降频变色）
 -- ==========================================
 local PG_Cross_L = CrossTab:AddLeftGroupbox({Name="准星样式",Icon="crosshair"})
 local PG_Cross_R = CrossTab:AddRightGroupbox({Name="外观",Icon="sliders"})
@@ -527,12 +485,28 @@ do
     local okg=pcall(function() g.Parent=game:GetService("CoreGui") end); if not okg or not g.Parent then g.Parent=LP:WaitForChild("PlayerGui") end
     local ct=Instance.new("Frame",g); ct.AnchorPoint=Vector2.new(0.5,0.5); ct.Position=UDim2.fromScale(0.5,0.5); ct.Size=UDim2.fromOffset(100,100); ct.BackgroundTransparency=1
     local ln=Instance.new("Frame",ct); ln.AnchorPoint=Vector2.new(0.5,0.5); ln.Position=UDim2.fromScale(0.5,0.5); ln.Size=UDim2.fromOffset(0,0); ln.BackgroundTransparency=1
-    local els={}
-    local function clear() for _,e in ipairs(els) do if e and e.Parent then e:Destroy() end end; table.clear(els) end
-    local function line(w,h,ox,oy) local l=Instance.new("Frame",ln); l.AnchorPoint=Vector2.new(0.5,0.5); l.Position=UDim2.new(0.5,ox,0.5,oy); l.Size=UDim2.fromOffset(w,h); l.BackgroundColor3=C.Color; l.BackgroundTransparency=C.Alpha; l.BorderSizePixel=0; table.insert(els,l); return l end
-    local function dot(s) local d=Instance.new("Frame",ln); d.AnchorPoint=Vector2.new(0.5,0.5); d.Position=UDim2.fromScale(0.5,0.5); d.Size=UDim2.fromOffset(s,s); d.BackgroundColor3=C.Color; d.BackgroundTransparency=C.Alpha; d.BorderSizePixel=0; Instance.new("UICorner",d).CornerRadius=UDim.new(1,0); table.insert(els,d); return d end
-    local function circle(s,t) local c=Instance.new("Frame",ln); c.AnchorPoint=Vector2.new(0.5,0.5); c.Position=UDim2.fromScale(0.5,0.5); c.Size=UDim2.fromOffset(s,s); c.BackgroundTransparency=1; Instance.new("UICorner",c).CornerRadius=UDim.new(1,0); local st=Instance.new("UIStroke",c); st.Color=C.Color; st.Thickness=t; st.Transparency=C.Alpha; table.insert(els,c); return c end
-    local function upColors() for _,e in ipairs(els) do if e:IsA("Frame") then local s=e:FindFirstChildOfClass("UIStroke"); if s then s.Color=C.Color; s.Transparency=C.Alpha else e.BackgroundColor3=C.Color; e.BackgroundTransparency=C.Alpha end end end end
+    local els={}; local strokes={}
+    local function clear() for _,e in ipairs(els) do if e and e.Parent then e:Destroy() end end; table.clear(els); table.clear(strokes) end
+    local function line(w,h,ox,oy)
+        local l=Instance.new("Frame",ln); l.AnchorPoint=Vector2.new(0.5,0.5); l.Position=UDim2.new(0.5,ox,0.5,oy); l.Size=UDim2.fromOffset(w,h); l.BackgroundColor3=C.Color; l.BackgroundTransparency=C.Alpha; l.BorderSizePixel=0
+        table.insert(els,l); table.insert(strokes,nil); return l
+    end
+    local function dot(s)
+        local d=Instance.new("Frame",ln); d.AnchorPoint=Vector2.new(0.5,0.5); d.Position=UDim2.fromScale(0.5,0.5); d.Size=UDim2.fromOffset(s,s); d.BackgroundColor3=C.Color; d.BackgroundTransparency=C.Alpha; d.BorderSizePixel=0; Instance.new("UICorner",d).CornerRadius=UDim.new(1,0)
+        table.insert(els,d); table.insert(strokes,nil); return d
+    end
+    local function circle(s,t)
+        local c=Instance.new("Frame",ln); c.AnchorPoint=Vector2.new(0.5,0.5); c.Position=UDim2.fromScale(0.5,0.5); c.Size=UDim2.fromOffset(s,s); c.BackgroundTransparency=1; Instance.new("UICorner",c).CornerRadius=UDim.new(1,0)
+        local st=Instance.new("UIStroke",c); st.Color=C.Color; st.Thickness=t; st.Transparency=C.Alpha
+        table.insert(els,c); table.insert(strokes,st); return c
+    end
+    local function upColors()
+        for i,e in ipairs(els) do
+            local st=strokes[i]
+            if st then st.Color=C.Color; st.Transparency=C.Alpha
+            else e.BackgroundColor3=C.Color; e.BackgroundTransparency=C.Alpha end
+        end
+    end
     local function draw()
         clear(); if not C.Enabled then return end
         local S,T,G=C.Size,C.Thickness,C.Gap
@@ -544,10 +518,17 @@ do
         elseif C.Style=="X形" then for _,o in ipairs({{G+S/2,0},{-(G+S/2),0},{0,G+S/2},{0,-(G+S/2)}}) do line(T,S,o[1],o[2]).Rotation=45 end end
         upColors()
     end
+    local colorAcc=0
     RunService.RenderStepped:Connect(function(dt)
         if C.Follow then local m=UIS:GetMouseLocation(); ct.Position=UDim2.fromOffset(m.X,m.Y) else ct.Position=UDim2.fromScale(0.5,0.5) end
         if C.Rotate then C.Rot=(C.Rot+C.RSpeed*dt)%360; ct.Rotation=C.Rot end
-        if C.AutoColor then C.Hue=(C.Hue+C.CSpeed*dt)%1; C.Color=Color3.fromHSV(C.Hue,1,1); upColors() end
+        if C.AutoColor then
+            colorAcc=colorAcc+dt
+            if colorAcc>=0.05 then
+                colorAcc=0
+                C.Hue=(C.Hue+C.CSpeed*0.05)%1; C.Color=Color3.fromHSV(C.Hue,1,1); upColors()
+            end
+        end
     end)
     draw()
     PG_Cross_L:CreateToggle({Name="启用准星",CurrentValue=true,Flag="CHOn",Callback=function(v) C.Enabled=v; ct.Visible=v; draw() end})
@@ -565,7 +546,7 @@ do
 end
 
 -- ==========================================
--- 音乐 Tab（左右）
+-- 音乐 Tab
 -- ==========================================
 local PG_Music_L = MusicTab:AddLeftGroupbox({Name="曲目控制",Icon="music"})
 local PG_Music_R = MusicTab:AddRightGroupbox({Name="播放参数",Icon="volume"})
@@ -579,7 +560,7 @@ local TR={
     ["游京"]={url="https://raw.githubusercontent.com/ggsq1741-debug/BAL/refs/heads/main/%E6%B8%B8%E4%BA%AC.ogg",f="t5.ogg"},
     ["夜色"]={url="https://raw.githubusercontent.com/ggsq1741-debug/BAL/refs/heads/main/%E5%A4%9C%E8%89%B2.ogg",f="t6.ogg"}
 }
-local DEF="游京"; local names={}; for n in pairs(TR) do table.insert(names,n) end; table.sort(names)
+local DEF="PHONK"; local names={}; for n in pairs(TR) do table.insert(names,n) end; table.sort(names)
     _G.WindUIMusic=_G.WindUIMusic or Instance.new("Sound")
     local snd=_G.WindUIMusic; snd.Name="MPlayer"; snd.Volume=0.5; snd.Looped=true; snd.Parent=SS
     local ready,cur=false,DEF
@@ -612,7 +593,7 @@ local DEF="游京"; local names={}; for n in pairs(TR) do table.insert(names,n) 
 end
 
 -- ==========================================
--- 甩飞 Tab（左右）
+-- 甩飞 Tab（PostSimulation 清角速度）
 -- ==========================================
 local PG_Swing_L = SwingTab:AddLeftGroupbox({Name="甩飞触发",Icon="wind"})
 local PG_Swing_R = SwingTab:AddRightGroupbox({Name="甩飞参数",Icon="sliders"})
@@ -649,14 +630,11 @@ do
                 local v=h.AssemblyLinearVelocity; local sy=math.clamp(v.Y,-40,40)
                 h.AssemblyAngularVelocity=Vector3.new(C.AngForce,C.AngForce,C.AngForce)
                 h.AssemblyLinearVelocity=Vector3.new(v.X*C.VMul,sy,v.Z*C.VMul)
-                RunService.RenderStepped:Wait()
-                if h and h.Parent then h.AssemblyAngularVelocity=Vector3.zero end
             end)
         end)
-        selfS=RunService.Stepped:Connect(function()
-            for _,p in pairs(Players:GetPlayers()) do if p~=LP and p.Character then
-                for _,pt in pairs(p.Character:GetDescendants()) do if pt:IsA("BasePart") then pcall(function() pt.CanCollide=false end) end end
-            end end
+        selfS=RunService.PostSimulation:Connect(function()
+            local h=GHRP(LP.Character)
+            if h then h.AssemblyAngularVelocity=Vector3.zero end
         end)
     end
     local function disableSelf()
@@ -749,7 +727,7 @@ do
 end
 
 -- ==========================================
--- 亚洲车王 Tab（左右）
+-- 亚洲车王 Tab
 -- ==========================================
 local PG_Car_L = CarTab:AddLeftGroupbox({Name="视角稳定",Icon="camera"})
 local PG_Car_R = CarTab:AddRightGroupbox({Name="防抖参数",Icon="sliders"})
@@ -801,11 +779,11 @@ do
     PG_Car_L:CreateDropdown({Name="防抖模式",Options={"稳定跟随","固定朝向","抗抖动"},CurrentOption="稳定跟随",AllowNone=false,Flag="CamStabMode",Callback=function(v) S.Mode=v; if S.Enabled then stop(); S.Enabled=true; start() end end})
     PG_Car_L:CreateButton({Name="重新应用",Callback=function() if not S.Enabled then return end; stop(); S.Enabled=true; start() end})
     PG_Car_R:CreateSlider({Name="平滑程度",Range={0,0.9},Increment=0.05,CurrentValue=0.3,Flag="CamStabSmooth",Callback=function(v) S.Smooth=v end})
-    PG_Car_R:CreateButton({Name="飞车脚本",Callback=function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/GUI.lua"))() end})
+    PG_Car_R:CreateButton({Name="飞车脚本",Callback=function() task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/GUI.lua"))() end) end})
 end
 
 -- ==========================================
--- 自动农场 Tab（左右）
+-- 自动农场 Tab（启停式循环）
 -- ==========================================
 local PG_Farm_L = FarmTab:AddLeftGroupbox({Name="农场主功能",Icon="wheat"})
 local PG_Farm_R = FarmTab:AddRightGroupbox({Name="参数/交互类型",Icon="sliders"})
@@ -875,16 +853,18 @@ do
         table.sort(other,function(a,b) return a.dist<b.dist end)
         for i=1,math.min(3,#other) do interact(other[i]) end
     end
-    task.spawn(function() while true do if F.Enabled then pcall(tickAura) end; task.wait(0.03) end end)
+    local auraConn
+    local function startAura() if auraConn then return end; auraConn=RunService.Heartbeat:Connect(function() pcall(tickAura) end) end
+    local function stopAura() if auraConn then auraConn:Disconnect(); auraConn=nil end end
     local function bagPct()
         local o,d=pcall(function() return require(RS.Devv).load("ClientData").Get() end); if not o or type(d)~="table" or type(d.bag)~="table" then return 0 end
         local tot=0; if type(d.bag.contents)=="table" then local O=require(RS.Shared.Wanted.Indicies.Objects); for _,n in pairs(d.bag.contents) do if type(n)=="string" then local w=O.GetDataProperty(n,"weight"); if type(w)=="number" then tot=tot+w end end end end
         local U=require(RS.Shared.Wanted.Modules.UpgradeUtil); local cap=U.GetBagCapacity(); if type(cap)~="number" or cap<=0 then cap=type(d.bag.capacity)=="number" and d.bag.capacity or 1 end; return tot/cap
     end
     local function bagFull() if LP:GetAttribute("isBagFull") then return true end; if not LP:GetAttribute("hasLootBag") then return false end; return bagPct()>=A.BagThr end
-    local run=false
+    local autoRun=false
     local function startAuto()
-        if run then return end; run=true
+        if autoRun then return end; autoRun=true
         task.spawn(function()
             while A.Enabled do
                 pcall(function()
@@ -896,42 +876,38 @@ do
                 end)
                 task.wait(0.1)
             end
-            run=false
+            autoRun=false
         end)
     end
-    PG_Farm_L:CreateToggle({Name="农场光环",CurrentValue=false,Flag="FarmAura",Callback=function(v) F.Enabled=v end})
+    PG_Farm_L:CreateToggle({Name="农场光环",CurrentValue=false,Flag="FarmAura",Callback=function(v) F.Enabled=v; if v then startAura() else stopAura() end end})
     PG_Farm_L:CreateToggle({Name="自动农场",CurrentValue=false,Flag="AutoFarm",Callback=function(v) A.Enabled=v; if v then startAuto() end end})
     PG_Farm_R:CreateSlider({Name="触发距离",Range={5,50},Increment=1,CurrentValue=15,Flag="FarmRange",Callback=function(v) F.Range=v end})
     PG_Farm_R:CreateSlider({Name="背包出售阈值",Range={0.5,1},Increment=0.05,CurrentValue=0.8,Flag="FarmBag",Callback=function(v) A.BagThr=v end})
     local AG={Enabled=false,Interval=1.0}
-    PG_Farm_R:CreateToggle({Name="自动打玻璃",CurrentValue=false,Flag="AutoGlass",Callback=function(v) AG.Enabled=v; N("打玻璃",v and "开" or "关") end})
+    local glassConn
+    local function startGlass()
+        if glassConn then return end
+        glassConn=RunService.Heartbeat:Connect(function()
+            if not AG.Enabled or not CPs or type(CPs.worldPropsById)~="table" then return end
+            pcall(function()
+                local c=LP.Character; local h=c and c:FindFirstChild("HumanoidRootPart")
+                if not h then return end
+                local bg,bd=nil,math.huge
+                for g,p in pairs(CPs.worldPropsById) do if type(p)=="table" and p.name=="JewelSpawn" and not p.isShattered then local pos=(p.GetPosition and p:GetPosition()) or (p.model and p.model.PrimaryPart and p.model.PrimaryPart.Position); if pos then local d=(h.Position-pos).Magnitude; if d<bd then bd=d; bg=g end end end end
+                if bg then pcall(function() FS("breakJewelCase",bg) end) end
+            end)
+        end)
+    end
+    local function stopGlass() if glassConn then glassConn:Disconnect(); glassConn=nil end end
+    PG_Farm_R:CreateToggle({Name="自动打玻璃",CurrentValue=false,Flag="AutoGlass",Callback=function(v) AG.Enabled=v; if v then startGlass() else stopGlass() end; N("打玻璃",v and "开" or "关") end})
     PG_Farm_R:CreateSlider({Name="打玻璃间隔",Range={0.2,5},Increment=0.1,CurrentValue=1.0,Flag="GlassInt",Callback=function(v) AG.Interval=v end})
-    task.spawn(function()
-        local last=0
-        while true do
-            if AG.Enabled and CPs and type(CPs.worldPropsById)=="table" then
-                pcall(function()
-                    local now=tick()
-                    if now-last>=0.5 then
-                        local c=LP.Character; local h=c and c:FindFirstChild("HumanoidRootPart")
-                        if h then
-                            local bg,bd=nil,math.huge
-                            for g,p in pairs(CPs.worldPropsById) do if type(p)=="table" and p.name=="JewelSpawn" and not p.isShattered then local pos=(p.GetPosition and p:GetPosition()) or (p.model and p.model.PrimaryPart and p.model.PrimaryPart.Position); if pos then local d=(h.Position-pos).Magnitude; if d<bd then bd=d; bg=g end end end end
-                            if bg then last=now; pcall(function() FS("breakJewelCase",bg) end) end
-                        end
-                    end
-                end)
-            end
-            task.wait(AG.Interval)
-        end
-    end)
     for opt,label in pairs(NAMES) do
         PG_Farm_R:CreateToggle({Name=label,CurrentValue=true,Flag="Farm_"..opt,Callback=function(v) if v then if not table.find(F.Opts,opt) then table.insert(F.Opts,opt) end else for i=#F.Opts,1,-1 do if F.Opts[i]==opt then table.remove(F.Opts,i) end end end end})
     end
 end
 
 -- ==========================================
--- 远程击杀 Tab（左右）
+-- 远程击杀 Tab
 -- ==========================================
 local PG_Rem_L = RemoteTab:AddLeftGroupbox({Name="远程击杀",Icon="target"})
 local PG_Rem_R = RemoteTab:AddRightGroupbox({Name="说明",Icon="info"})
@@ -947,14 +923,14 @@ do
     end
     PG_Rem_L:CreateDropdown({Name="选择玩家",Options=names(),CurrentOption="无",AllowNone=false,Flag="RemoteTgt",Callback=function(v) sel=v end})
     PG_Rem_L:CreateToggle({Name="循环传送",CurrentValue=false,Flag="RemoteLoop",Callback=function(v) loop=v end})
-    PG_Rem_L:CreateButton({Name="远程传送击杀",Callback=function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/%E8%BF%9C%E7%A8%8B%E5%87%BB%E6%9D%80.lua"))() end})
+    PG_Rem_L:CreateButton({Name="远程传送击杀",Callback=function() task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/%E8%BF%9C%E7%A8%8B%E5%87%BB%E6%9D%80.lua"))() end) end})
     PG_Rem_R:CreateButton({Name="使用说明",Callback=function() Library:Notify({Title="说明",Content="先开ESP看名字 → 选目标 → 循环传送 → 击杀",Type="Info",Duration=8}) end})
     RunService.RenderStepped:Connect(function() if loop and sel~="无" then tp() end end)
     Players.PlayerRemoving:Connect(function(p) if p.Name==sel then sel="无" end end)
 end
 
 -- ==========================================
--- 光环 Tab（左右）
+-- 光环 Tab（合并调度器 + 白名单）
 -- ==========================================
 local PG_Aura_L = AuraTab:AddLeftGroupbox({Name="踩踏/逮捕",Icon="award"})
 local PG_Aura_R = AuraTab:AddRightGroupbox({Name="抓取/救援",Icon="award"})
@@ -962,23 +938,41 @@ do
     local df=RS:FindFirstChild("Devv") or RS:FindFirstChild("devv")
     if df then
         local dm=require(df); local FS=dm.load("Network").FireServer
-        local C={Stomp={Enabled=false,Interval=0.5,Range=50},Arrest={Enabled=false,Interval=0.5,Range=50},Grab={Enabled=false,Interval=0.5,Range=50},Revive={Enabled=false,Interval=0.5,Range=50}}
+        local C={Stomp={Enabled=false,Interval=0.5,Range=50,Event="finish",SkipTeam=true},Arrest={Enabled=false,Interval=0.5,Range=50,Event="arrest",SkipTeam=false},Grab={Enabled=false,Interval=0.5,Range=50,Event="grab",SkipTeam=true},Revive={Enabled=false,Interval=0.5,Range=50,Event="revive",SkipTeam=false}}
         local function near(r,skipTeam)
             local c=LP.Character; if not c then return nil end; local mh=c:FindFirstChild("HumanoidRootPart"); if not mh then return nil end
             local best,bd=nil,math.huge
-            for _,p in ipairs(Players:GetPlayers()) do if p~=LP and p.Character then
-                local st=p.Team and LP.Team and p.Team==LP.Team
-                if not (skipTeam and st) then
-                    local h=p.Character:FindFirstChild("HumanoidRootPart"); local hm=p.Character:FindFirstChildOfClass("Humanoid")
-                    if h and hm and hm.Health>0 then local dn=p:GetAttribute("isDowned") or p:GetAttribute("knocked") or p:GetAttribute("crawling"); local d=(h.Position-mh.Position).Magnitude; if d<=r and d<bd and dn~=false then bd=d; best=p end end
+            for _,p in ipairs(Players:GetPlayers()) do
+                if p~=LP and p.Character and not (_G.WL and _G.WL[p.Name]) then
+                    local st=p.Team and LP.Team and p.Team==LP.Team
+                    if not (skipTeam and st) then
+                        local h=p.Character:FindFirstChild("HumanoidRootPart"); local hm=p.Character:FindFirstChildOfClass("Humanoid")
+                        if h and hm and hm.Health>0 then
+                            local dn=p:GetAttribute("isDowned") or p:GetAttribute("knocked") or p:GetAttribute("crawling")
+                            local d=(h.Position-mh.Position).Magnitude
+                            if d<=r and d<bd and dn~=false then bd=d; best=p end
+                        end
+                    end
                 end
-            end end
+            end
             return best
         end
-        task.spawn(function() while true do if C.Stomp.Enabled then local t=near(C.Stomp.Range,true); if t then pcall(function() FS("finish",t.UserId) end) end end; task.wait(C.Stomp.Interval) end end)
-        task.spawn(function() while true do if C.Arrest.Enabled then local t=near(C.Arrest.Range,false); if t then pcall(function() FS("arrest",t.UserId) end) end end; task.wait(C.Arrest.Interval) end end)
-        task.spawn(function() while true do if C.Grab.Enabled then local t=near(C.Grab.Range,true); if t then pcall(function() FS("grab",t.UserId) end) end end; task.wait(C.Grab.Interval) end end)
-        task.spawn(function() while true do if C.Revive.Enabled then local t=near(C.Revive.Range,false); if t then pcall(function() FS("revive",t.UserId) end) end end; task.wait(C.Revive.Interval) end end)
+        task.spawn(function()
+            local acc={Stomp=0,Arrest=0,Grab=0,Revive=0}
+            while true do
+                local dt=task.wait(0.05)
+                for k,cfg in pairs(C) do
+                    if cfg.Enabled then
+                        acc[k]=acc[k]+dt
+                        if acc[k]>=cfg.Interval then
+                            acc[k]=0
+                            local t=near(cfg.Range,cfg.SkipTeam)
+                            if t then pcall(function() FS(cfg.Event,t.UserId) end) end
+                        end
+                    end
+                end
+            end
+        end)
         PG_Aura_L:CreateToggle({Name="启用踩踏",CurrentValue=false,Flag="AuraStomp",Callback=function(v) C.Stomp.Enabled=v end})
         PG_Aura_L:CreateSlider({Name="踩踏间隔",Range={0.01,5},Increment=0.01,CurrentValue=0.5,Flag="AuraStompI",Callback=function(v) C.Stomp.Interval=v end})
         PG_Aura_L:CreateToggle({Name="启用逮捕",CurrentValue=false,Flag="AuraArrest",Callback=function(v) C.Arrest.Enabled=v end})
@@ -987,11 +981,65 @@ do
         PG_Aura_R:CreateSlider({Name="抓取间隔",Range={0.01,5},Increment=0.01,CurrentValue=0.5,Flag="AuraGrabI",Callback=function(v) C.Grab.Interval=v end})
         PG_Aura_R:CreateToggle({Name="启用救援",CurrentValue=false,Flag="AuraRevive",Callback=function(v) C.Revive.Enabled=v end})
         PG_Aura_R:CreateSlider({Name="救援间隔",Range={0.01,5},Increment=0.01,CurrentValue=0.5,Flag="AuraReviveI",Callback=function(v) C.Revive.Interval=v end})
+
+        -- ⭐ 白名单（勾上 = 光环跳过该玩家）
+        _G.WL = _G.WL or {}
+        local PG_Aura_WL = AuraTab:AddRightGroupbox({Name="光环白名单",Icon="shield"})
+        local AuraWL_Created = {}
+
+        local function AuraWL_AddFor(plr)
+            local name = plr.Name
+            if AuraWL_Created[name] then return end
+            local isAlreadyWL = (_G.WL and _G.WL[name] == true)
+            local dn = plr.DisplayName
+            local display = (dn ~= "" and dn ~= name)
+                and (dn .. " (@" .. name .. ")")
+                or name
+            local t = PG_Aura_WL:CreateToggle({
+                Name = display,
+                CurrentValue = isAlreadyWL,
+                Flag = "AuraWL_" .. name,
+                Callback = function(v)
+                    _G.WL = _G.WL or {}
+                    if v then _G.WL[name] = true else _G.WL[name] = nil end
+                end
+            })
+            AuraWL_Created[name] = t
+        end
+
+        local function AuraWL_RemoveFor(name)
+            local t = AuraWL_Created[name]
+            if t then
+                pcall(function() t:Destroy() end)
+                AuraWL_Created[name] = nil
+            end
+            if _G.WL then _G.WL[name] = nil end
+        end
+
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP then AuraWL_AddFor(p) end
+        end
+        Players.PlayerAdded:Connect(function(p)
+            if p ~= LP then task.wait(0.3); AuraWL_AddFor(p) end
+        end)
+        Players.PlayerRemoving:Connect(function(p)
+            if p ~= LP then AuraWL_RemoveFor(p.Name) end
+        end)
+        PG_Aura_WL:CreateButton({
+            Name = "刷新白名单列表",
+            Callback = function()
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LP then AuraWL_AddFor(p) end
+                end
+                N("光环白名单", "已刷新")
+            end
+        })
+    else
+        AuraTab:AddLeftGroupbox({Name="光环",Icon="award"}):CreateButton({Name="提示",Callback=function() N("光环","需在《通缉》游戏内使用") end})
     end
 end
-
 -- ==========================================
--- 辅助瞄准 Tab（左右）
+-- 辅助瞄准 Tab
 -- ==========================================
 local PG_Aim_L = AimTab:AddLeftGroupbox({Name="辅助瞄准",Icon="crosshair"})
 local PG_Aim_R = AimTab:AddRightGroupbox({Name="FOV/阵营",Icon="circle"})
@@ -1002,7 +1050,11 @@ do
         local dm=require(df); local ld=dm.load; CS=ld("ClientSettings"); SD=require(RS.Shared.Wanted.Indicies.SettingsData); AAM=require(RS.Client.Wanted.Objects.ClientTool.Components.Tools.Guns.AimAssist)
     end)
     if okM then
-        local A={Enabled=false,Part="Body",SX=2.7,SY=1,PX=2.8,PY=2.6,IgTeam=true,Camp="全部",Wall=true,ShowFOV=false,FOVR=250,FOVFix=true,FOVC=Color3.fromRGB(190,120,255),FOVT=1.5,FOVA=0.3,FOVS=64}
+        local A={
+            Enabled=false,Part="Body",SX=2.7,SY=1,PX=2.8,PY=2.6,
+            IgTeam=true,Camp="全部",Wall=true,
+            ShowFOV=false,FOVR=250,FOVFix=true,FOVC=Color3.fromRGB(190,120,255),FOVT=1.5,FOVA=0.3,FOVS=64,
+        }
         local orig=AAM.Step
         local cir=Drawing.new("Circle"); cir.Visible=false; cir.Filled=false; cir.Thickness=A.FOVT; cir.Transparency=A.FOVA; cir.Color=A.FOVC; cir.NumSides=A.FOVS; cir.Radius=A.FOVR
         cir.Position=Vector2.new(workspace.CurrentCamera.ViewportSize.X/2,workspace.CurrentCamera.ViewportSize.Y/2)
@@ -1014,16 +1066,14 @@ do
             end
         end
         RunService.RenderStepped:Connect(function() pcall(upCir) end)
+
         local function camp(p) if not p then return nil end; local t=p:GetAttribute("currentTeam"); if type(t)=="string" then return t end; if p.Team then return p.Team.Name end; return nil end
         local function isTeam(p) if p==LP then return true end; local a,b=camp(LP),camp(p); if a==nil or b==nil then return p.Team~=nil and p.Team==LP.Team end; return a==b end
-
-        -- ⭐ 白名单最高优先：勾上 = 直接跳过，不瞄
         local function allow(p)
             if _G.WL and _G.WL[p.Name] == true then return false end
             if A.Camp~="全部" then local c=camp(p); if A.Camp=="仅警察" and c~="police" then return false end; if A.Camp=="仅帮派" and c~="syndicate" then return false end; if A.Camp=="仅平民" and c~="civilian" then return false end; return true end
             if A.IgTeam and isTeam(p) then return false end; return true
         end
-
         local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=true
         local function wall(p)
             if not p or not p.Parent then return true end
@@ -1064,7 +1114,57 @@ do
                 LP:SetAttribute("xAngle",(cx-by*spX)%360); LP:SetAttribute("yAngle",math.clamp(cy+bp*spY,-80,80))
             end
         end
-        PG_Aim_L:CreateToggle({Name="启用辅助瞄准",CurrentValue=false,Flag="AimOn",Callback=function(v) A.Enabled=v; if v then AAM.Step=step; N("辅助瞄准","开") else AAM.Step=orig; N("辅助瞄准","关") end; upCir() end})
+
+        local aimToggleObj = nil
+        local applying = false
+        local function setAim(on)
+            if A.Enabled == on then return end
+            A.Enabled = on
+            AAM.Step = on and step or orig
+            upCir()
+            if aimToggleObj and not applying then
+                applying = true
+                pcall(function() aimToggleObj:SetValue(on) end)
+                applying = false
+            end
+            N("辅助瞄准", on and "开" or "关")
+        end
+
+        aimToggleObj = PG_Aim_L:CreateToggle({
+            Name="启用辅助瞄准",CurrentValue=false,Flag="AimOn",
+            Callback=function(v)
+                if applying then return end
+                if A.Enabled == v then return end
+                A.Enabled = v
+                AAM.Step = v and step or orig
+                upCir()
+            end
+        })
+
+local hotkeyMap = {
+    ["无"]=nil,
+    ["R"]=Enum.KeyCode.R, ["T"]=Enum.KeyCode.T, ["Y"]=Enum.KeyCode.Y,
+    ["G"]=Enum.KeyCode.G, ["H"]=Enum.KeyCode.H, ["B"]=Enum.KeyCode.B,
+    ["N"]=Enum.KeyCode.N, ["M"]=Enum.KeyCode.M, ["J"]=Enum.KeyCode.J,
+    ["K"]=Enum.KeyCode.K, ["L"]=Enum.KeyCode.L, ["P"]=Enum.KeyCode.P,
+    ["U"]=Enum.KeyCode.U, ["O"]=Enum.KeyCode.O,
+    ["F1"]=Enum.KeyCode.F1, ["F2"]=Enum.KeyCode.F2, ["F3"]=Enum.KeyCode.F3,
+    ["F4"]=Enum.KeyCode.F4,
+}
+local currentHotkey = nil
+PG_Aim_L:CreateDropdown({
+    Name="快捷键开关",
+    Options={"无","R","T","Y","G","H","B","N","M","J","K","L","P","U","O","F1","F2","F3","F4"},
+    CurrentOption="无",AllowNone=false,Flag="AimHotkey",
+    Callback=function(v) currentHotkey = hotkeyMap[v] end
+})
+        UIS.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if currentHotkey and input.KeyCode == currentHotkey then
+                setAim(not A.Enabled)
+            end
+        end)
+
         PG_Aim_L:CreateDropdown({Name="瞄准部位",Options={"Head","Body"},CurrentOption="Body",AllowNone=false,Flag="AimPart",Callback=function(v) A.Part=v end})
         PG_Aim_L:CreateSlider({Name="水平速度",Range={0.1,5},Increment=0.1,CurrentValue=2.7,Flag="AimSX",Callback=function(v) A.SX=v end})
         PG_Aim_L:CreateSlider({Name="垂直速度",Range={0.1,5},Increment=0.1,CurrentValue=1,Flag="AimSY",Callback=function(v) A.SY=v end})
@@ -1080,26 +1180,25 @@ do
         PG_Aim_R:CreateDropdown({Name="只吸附阵营",Options={"全部","仅警察","仅帮派","仅平民"},CurrentOption="全部",AllowNone=false,Flag="AimCamp",Callback=function(v) A.Camp=v end})
         PG_Aim_R:CreateToggle({Name="掩体检测",CurrentValue=true,Flag="AimWall",Callback=function(v) A.Wall=v end})
 
-        -- ⭐ 白名单（勾上 = 不瞄准）
         local PG_Aim_WL = AimTab:AddRightGroupbox({Name="白名单",Icon="shield"})
         _G.WL = _G.WL or {}
         local AimWL_Created = {}
 
-        local function AimWL_AddFor(playerName)
+        local function AimWL_AddFor(plr)
+            local playerName = plr.Name
             if AimWL_Created[playerName] then return end
             local isAlreadyWL = (_G.WL and _G.WL[playerName] == true)
-            
+            local displayName = plr.DisplayName
+            local display = (displayName ~= "" and displayName ~= playerName)
+                and (displayName .. " (@" .. playerName .. ")")
+                or playerName
             local t = PG_Aim_WL:CreateToggle({
-                Name = playerName,
+                Name = display,
                 CurrentValue = isAlreadyWL,
                 Flag = "AimWL_" .. playerName,
                 Callback = function(v)
                     _G.WL = _G.WL or {}
-                    if v then
-                        _G.WL[playerName] = true
-                    else
-                        _G.WL[playerName] = nil
-                    end
+                    if v then _G.WL[playerName] = true else _G.WL[playerName] = nil end
                 end
             })
             AimWL_Created[playerName] = t
@@ -1115,16 +1214,11 @@ do
         end
 
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LP then AimWL_AddFor(p.Name) end
+            if p ~= LP then AimWL_AddFor(p) end
         end
-
         Players.PlayerAdded:Connect(function(p)
-            if p ~= LP then
-                task.wait(0.3)
-                AimWL_AddFor(p.Name)
-            end
+            if p ~= LP then task.wait(0.3); AimWL_AddFor(p) end
         end)
-
         Players.PlayerRemoving:Connect(function(p)
             if p ~= LP then AimWL_RemoveFor(p.Name) end
         end)
@@ -1133,7 +1227,7 @@ do
             Name = "刷新白名单列表",
             Callback = function()
                 for _, p in ipairs(Players:GetPlayers()) do
-                    if p ~= LP then AimWL_AddFor(p.Name) end
+                    if p ~= LP then AimWL_AddFor(p) end
                 end
                 N("白名单", "已刷新")
             end
@@ -1141,76 +1235,13 @@ do
     end
 end
 -- ==========================================
--- 范围 Tab（左右）
+-- 范围 Tab（调用统一模块）
 -- ==========================================
 local PG_Range_L = RangeTab:AddLeftGroupbox({Name="范围",Icon="move"})
 local PG_Range_R = RangeTab:AddRightGroupbox({Name="参数",Icon="sliders"})
-do
-    local sz = 8
-    local conn = nil
-    local charConns = {} -- 用于记录重生事件，方便彻底清理
+PG_Range_L:CreateToggle({Name="范围",CurrentValue=false,Flag="RangeOn",Callback=function(v) setRange(v) end})
+PG_Range_R:CreateSlider({Name="范围大小",Range={1,100},Increment=1,CurrentValue=8,Flag="RangeSz",Callback=function(v) RangeModule.Size=v; if RangeModule.Enabled then applyRangeAll() end end})
 
-    local function exp(p)
-        if p == LP then return end
-        local c = p.Character; if not c then return end
-        local h = c:FindFirstChildOfClass("Humanoid"); if not h or h.Health <= 0 then return end
-        local hrp = c:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-        local s = math.clamp(sz, 1, 100)
-        pcall(function()
-            hrp.Size = Vector3.new(s, s, s)
-            hrp.Transparency = 0.85
-            hrp.Color = Color3.fromRGB(190, 190, 190)
-            hrp.Material = Enum.Material.Neon
-            hrp.CanCollide = false
-        end)
-    end
-
-    local function rst(p)
-        if p == LP then return end
-        local c = p.Character; if not c then return end
-        local hrp = c:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-        pcall(function()
-            hrp.Size = Vector3.new(2, 2, 1)
-            hrp.Transparency = 1 -- ⭐ 核心修复：1代表完全透明隐身，0会变成灰方块
-            hrp.Color = Color3.fromRGB(163, 162, 165)
-            hrp.Material = Enum.Material.Plastic
-            hrp.CanCollide = true
-        end)
-    end
-
-    local function bindP(p)
-        if p == LP then return end
-        if charConns[p] then charConns[p]:Disconnect() end
-        charConns[p] = p.CharacterAdded:Connect(function()
-            task.wait(1)
-            if conn then exp(p) end
-        end)
-    end
-
-    PG_Range_L:CreateToggle({Name="范围",CurrentValue=false,Flag="RangeOn",Callback=function(v)
-        if v then
-            if conn then conn:Disconnect() end
-            for _, c in pairs(charConns) do pcall(function() c:Disconnect() end) end
-            table.clear(charConns)
-
-            conn = RunService.Heartbeat:Connect(function()
-                for _, p in ipairs(Players:GetPlayers()) do exp(p) end
-            end)
-
-            for _, p in ipairs(Players:GetPlayers()) do bindP(p) end
-        else
-            if conn then conn:Disconnect(); conn = nil end
-            for _, c in pairs(charConns) do pcall(function() c:Disconnect() end) end
-            table.clear(charConns)
-            for _, p in ipairs(Players:GetPlayers()) do rst(p) end
-        end
-    end})
-    PG_Range_R:CreateSlider({Name="范围大小",Range={1,100},Increment=1,CurrentValue=8,Flag="RangeSz",Callback=function(v) sz=v end})
-end
-
--- ==========================================
--- 静默瞄准 Tab（左右）
--- ==========================================
 local PG_Silent_L = SilentTab:AddLeftGroupbox({Name="静默瞄准",Icon="target"})
 local PG_Silent_R = SilentTab:AddRightGroupbox({Name="白名单(勾上=不打)",Icon="shield"})
 do
@@ -1268,14 +1299,36 @@ do
     PG_Silent_R:CreateToggle({Name="显示瞄准射线",CurrentValue=false,Flag="SATr",Callback=function(v) S.ShowTr=v end})
     PG_Silent_R:CreateSlider({Name="射线粗细",Range={1,10},Increment=1,CurrentValue=1,Flag="SATrT",Callback=function(v) S.TrT=v; tr.Thickness=v end})
     PG_Silent_R:CreateSlider({Name="射线透明度",Range={0,1},Increment=0.05,CurrentValue=0.3,Flag="SATrA",Callback=function(v) S.TrA=v; tr.Transparency=v end})
+
     local created={}
-    local function addWL(name)
+    local function addWL(plr)
+        local name=plr.Name
         if created[name] then return end
-        PG_Silent_R:CreateToggle({Name=name,CurrentValue=false,Flag="WL_"..name,Callback=function(v) _G.WL=_G.WL or {}; if v then _G.WL[name]=true else _G.WL[name]=nil end end})
+        local displayName=plr.DisplayName
+        local display=(displayName~="" and displayName~=name)
+            and (displayName.." (@"..name..")")
+            or name
+        local isAlreadyWL=(_G.WL and _G.WL[name]==true)
+        PG_Silent_R:CreateToggle({
+            Name=display,
+            CurrentValue=isAlreadyWL,
+            Flag="WL_"..name,
+            Callback=function(v)
+                _G.WL=_G.WL or {}
+                if v then _G.WL[name]=true else _G.WL[name]=nil end
+            end
+        })
         created[name]=true
     end
-    for _,p in ipairs(Players:GetPlayers()) do if p~=LP then addWL(p.Name) end end
-    Players.PlayerAdded:Connect(function(p) if p~=LP then task.wait(0.3); addWL(p.Name) end end)
+    local function removeWL(name)
+        if created[name] then created[name]=nil end
+        if _G.WL then _G.WL[name]=nil end
+    end
+
+    for _,p in ipairs(Players:GetPlayers()) do if p~=LP then addWL(p) end end
+    Players.PlayerAdded:Connect(function(p) if p~=LP then task.wait(0.3); addWL(p) end end)
+    Players.PlayerRemoving:Connect(function(p) if p~=LP then removeWL(p.Name) end end)
+
     RunService.RenderStepped:Connect(function()
         curPart=nil; local tg=nil
         if S.On then tg=near() end
@@ -1287,13 +1340,13 @@ do
     end)
     local oldNC
     oldNC=hookmetamethod(game,"__namecall",newcclosure(function(...)
-        local m=getnamecallmethod(); local a={...}
-        if S.On and not checkcaller() and curPart then
-            if math.random()<=S.Hit/100 then
-                if m=="Raycast" then
-                    if #a>=3 and typeof(a[2])=="Vector3" and typeof(a[3])=="Vector3" then
-                        if a[3].Magnitude>=100 then a[3]=(curPart.Position-a[2]).Unit*1000; return oldNC(unpack(a)) end
-                    end
+        local m=getnamecallmethod()
+        if S.On and not checkcaller() and curPart and m=="Raycast" then
+            local a={...}
+            if #a>=3 and typeof(a[2])=="Vector3" and typeof(a[3])=="Vector3" then
+                if a[3].Magnitude>=100 and math.random()<=S.Hit/100 then
+                    a[3]=(curPart.Position-a[2]).Unit*1000
+                    return oldNC(unpack(a))
                 end
             end
         end
@@ -1302,7 +1355,7 @@ do
 end
 
 -- ==========================================
--- ESP Tab（左右）
+-- ESP Tab（复用表）
 -- ==========================================
 local PG_ESP_L = ESPTab:AddLeftGroupbox({Name="基础显示",Icon="eye"})
 local PG_ESP_R = ESPTab:AddRightGroupbox({Name="射线/属性",Icon="activity"})
@@ -1330,14 +1383,16 @@ do
     end
     local function destroy(o) if not o then return end; if o.box and o.box.Parent then pcall(function() o.box:Destroy() end) end; if o.tr then pcall(function() o.tr:Remove() end) end end
     local function hide(o) o.box.Visible=false; if o.tr then o.tr.Visible=false end end
+    local ReuseList, ReuseSeen = {}, {}
+    local r1buf, r2buf, r3buf = {}, {}, {}
     RunService.RenderStepped:Connect(function()
-        local list={}
-        for _,p in ipairs(Players:GetPlayers()) do if p~=LP and p.Character then table.insert(list,{c=p.Character,plr=p}) end end
-        local seen={}; for _,it in ipairs(list) do seen[it.c]=true end
-        for ch,o in pairs(ESP) do if not seen[ch] or not ch.Parent then destroy(o); ESP[ch]=nil end end
+        for i=#ReuseList,1,-1 do ReuseList[i]=nil end
+        for k in pairs(ReuseSeen) do ReuseSeen[k]=nil end
+        for _,p in ipairs(Players:GetPlayers()) do if p~=LP and p.Character then table.insert(ReuseList,{c=p.Character,plr=p}); ReuseSeen[p.Character]=true end end
+        for ch,o in pairs(ESP) do if not ReuseSeen[ch] or not ch.Parent then destroy(o); ESP[ch]=nil end end
         if not C.On then for _,o in pairs(ESP) do hide(o) end; return end
         local mh=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart"); local vp=Cam.ViewportSize
-        for _,it in ipairs(list) do
+        for _,it in ipairs(ReuseList) do
             local ch,plr=it.c,it.plr
             if not ESP[ch] then ESP[ch]=mk() end
             local o=ESP[ch]; local h=ch:FindFirstChildOfClass("Humanoid"); local hrp=ch:FindFirstChild("HumanoidRootPart"); local hd=ch:FindFirstChild("Head")
@@ -1352,13 +1407,16 @@ do
             o.box.Position=UDim2.fromOffset(x,y); o.box.Size=UDim2.fromOffset(wd,ht); o.box.Visible=C.Box; o.st.Color=cc; o.st.Thickness=C.BoxT; o.st.Transparency=C.Box and 0 or 1
             if C.HP then local r=math.clamp(h.Health/math.max(1,h.MaxHealth),0,1); o.hpb.Visible=true; o.hpf.Size=UDim2.new(1,0,r,0); if r>0.6 then o.hpf.BackgroundColor3=Color3.fromRGB(80,255,80) elseif r>0.3 then o.hpf.BackgroundColor3=Color3.fromRGB(255,200,60) else o.hpf.BackgroundColor3=Color3.fromRGB(255,60,60) end else o.hpb.Visible=false end
             if C.Name then o.nm.Text=plr.DisplayName; o.nm.TextColor3=cc; o.nm.Visible=true else o.nm.Visible=false end
-            local r1={}; local tm,rk=team(plr)
-            if C.ShowRank then if tm=="police" then table.insert(r1,rk and ("警察·"..rk) or "警察") elseif tm=="syndicate" then table.insert(r1,rk and ("帮派·"..rk) or "帮派") else table.insert(r1,"平民") end end
-            if C.ShowWanted then local w=plr:GetAttribute("wantedLevel") or 0; local st=plr:GetAttribute("stars") or 0; if w>0 then local s=math.floor(st); local ss=s>0 and (" "..string.rep("★",math.min(s,5))) or ""; table.insert(r1,"通缉"..math.floor(w)..ss) end end
-            o.l1.Text=table.concat(r1,"  ·  "); o.l1.TextColor3=cc; o.l1.Visible=C.ShowRank or C.ShowWanted
-            local r2={}; if C.ShowCash then local c=plr:GetAttribute("cash"); if type(c)=="number" then table.insert(r2,"$"..fmt(c)) end end; table.insert(r2,string.format("%dm",math.floor(d))); o.l2.Text=table.concat(r2,"  ·  "); o.l2.Visible=C.ShowCash
-            local r3={}; if C.ShowStates then if plr:GetAttribute("isDriving") then table.insert(r3,"驾驶·"..(plr:GetAttribute("vehicleType") or "车")) end; if plr:GetAttribute("aiming") then table.insert(r3,"瞄准") end; if plr:GetAttribute("isTyping") then table.insert(r3,"打字") end; if plr:GetAttribute("hasLootBag") then table.insert(r3,"赃物") end end
-            if #r3>0 then o.l3.Text=table.concat(r3,"  ·  "); o.l3.Visible=true else o.l3.Visible=false end
+            for i=#r1buf,1,-1 do r1buf[i]=nil end
+            local tm,rk=team(plr)
+            if C.ShowRank then if tm=="police" then table.insert(r1buf,rk and ("警察·"..rk) or "警察") elseif tm=="syndicate" then table.insert(r1buf,rk and ("帮派·"..rk) or "帮派") else table.insert(r1buf,"平民") end end
+            if C.ShowWanted then local w=plr:GetAttribute("wantedLevel") or 0; local st=plr:GetAttribute("stars") or 0; if w>0 then local s=math.floor(st); local ss=s>0 and (" "..string.rep("★",math.min(s,5))) or ""; table.insert(r1buf,"通缉"..math.floor(w)..ss) end end
+            o.l1.Text=table.concat(r1buf,"  ·  "); o.l1.TextColor3=cc; o.l1.Visible=C.ShowRank or C.ShowWanted
+            for i=#r2buf,1,-1 do r2buf[i]=nil end
+            if C.ShowCash then local c=plr:GetAttribute("cash"); if type(c)=="number" then table.insert(r2buf,"$"..fmt(c)) end end; table.insert(r2buf,string.format("%dm",math.floor(d))); o.l2.Text=table.concat(r2buf,"  ·  "); o.l2.Visible=C.ShowCash
+            for i=#r3buf,1,-1 do r3buf[i]=nil end
+            if C.ShowStates then if plr:GetAttribute("isDriving") then table.insert(r3buf,"驾驶·"..(plr:GetAttribute("vehicleType") or "车")) end; if plr:GetAttribute("aiming") then table.insert(r3buf,"瞄准") end; if plr:GetAttribute("isTyping") then table.insert(r3buf,"打字") end; if plr:GetAttribute("hasLootBag") then table.insert(r3buf,"赃物") end end
+            if #r3buf>0 then o.l3.Text=table.concat(r3buf,"  ·  "); o.l3.Visible=true else o.l3.Visible=false end
         end
     end)
     PG_ESP_L:CreateToggle({Name="启用ESP",CurrentValue=false,Flag="ESPOn",Callback=function(v) C.On=v end})
@@ -1379,7 +1437,7 @@ do
 end
 
 -- ==========================================
--- ESP2 Tab（左右）
+-- ESP2 Tab
 -- ==========================================
 local PG_ESP2_L = ESP2Tab:AddLeftGroupbox({Name="ESP2",Icon="eye"})
 local PG_ESP2_R = ESP2Tab:AddRightGroupbox({Name="参数",Icon="sliders"})
@@ -1404,15 +1462,15 @@ do
         if p==LP then return end; local c,h,r,hd=get(p)
         if not c or not h or h.Health<=0 then for _,x in pairs(o) do x.Visible=false end; return end
         local d=(Cam.CFrame.Position-r.Position).Magnitude; if d>MD then for _,x in pairs(o) do x.Visible=false end; return end
-        local hp=toS(hd.Position+Vector3.new(0,0.5,0)); local rp=toS(r.Position)
-        if not hp or not rp then for _,x in pairs(o) do x.Visible=false end; return end
-        local ht=math.abs(hp.Y-rp.Y)*BS; local wd=ht*0.65; ht=math.max(ht,15); wd=math.max(wd,10)
-        local tl=Vector2.new(hp.X-wd/2,hp.Y-ht*0.2); local br=Vector2.new(hp.X+wd/2,tl.Y+ht)
+        local hpP=toS(hd.Position+Vector3.new(0,0.5,0)); local rp=toS(r.Position)
+        if not hpP or not rp then for _,x in pairs(o) do x.Visible=false end; return end
+        local ht=math.abs(hpP.Y-rp.Y)*BS; local wd=ht*0.65; ht=math.max(ht,15); wd=math.max(wd,10)
+        local tl=Vector2.new(hpP.X-wd/2,hpP.Y-ht*0.2); local br=Vector2.new(hpP.X+wd/2,tl.Y+ht)
         if box then o.B.Visible=true; o.B.Size=br-tl; o.B.Position=tl; o.B.Thickness=BT; local pc=h.Health/h.MaxHealth; if pc>0.5 then o.B.Color=Color3.fromRGB(0,255,0) elseif pc>0.25 then o.B.Color=Color3.fromRGB(255,165,0) else o.B.Color=Color3.fromRGB(255,0,0) end else o.B.Visible=false end
-        if nm then o.N.Visible=true; o.N.Text=p.Name; o.N.Color=Color3.fromRGB(255,255,255); o.N.Position=Vector2.new(hp.X,tl.Y-FS-2) else o.N.Visible=false end
-        if dist then o.D.Visible=true; o.D.Text=string.format("[%d m]",math.floor(d)); o.D.Color=Color3.fromRGB(200,200,200); o.D.Position=Vector2.new(hp.X,br.Y+2) else o.D.Visible=false end
-        if hp then o.H.Visible=true; o.H.Text=string.format("HP: %d/%d",math.floor(h.Health),math.floor(h.MaxHealth)); o.H.Color=Color3.fromRGB(0,255,0); o.H.Position=Vector2.new(hp.X,br.Y+FS+2) else o.H.Visible=false end
-        if tr then o.T.Visible=true; o.T.From=Vector2.new(Cam.ViewportSize.X/2,0); o.T.To=Vector2.new(hp.X,br.Y); o.T.Color=Color3.fromRGB(255,255,255) else o.T.Visible=false end
+        if nm then o.N.Visible=true; o.N.Text=p.Name; o.N.Color=Color3.fromRGB(255,255,255); o.N.Position=Vector2.new(hpP.X,tl.Y-FS-2) else o.N.Visible=false end
+        if dist then o.D.Visible=true; o.D.Text=string.format("[%d m]",math.floor(d)); o.D.Color=Color3.fromRGB(200,200,200); o.D.Position=Vector2.new(hpP.X,br.Y+2) else o.D.Visible=false end
+        if hp then o.H.Visible=true; o.H.Text=string.format("HP: %d/%d",math.floor(h.Health),math.floor(h.MaxHealth)); o.H.Color=Color3.fromRGB(0,255,0); o.H.Position=Vector2.new(hpP.X,br.Y+FS+2) else o.H.Visible=false end
+        if tr then o.T.Visible=true; o.T.From=Vector2.new(Cam.ViewportSize.X/2,0); o.T.To=Vector2.new(hpP.X,br.Y); o.T.Color=Color3.fromRGB(255,255,255) else o.T.Visible=false end
     end
     local function initP(p) if p==LP then return end; if obj[p] then kill(obj[p]) end; obj[p]=mk() end
     PG_ESP2_L:CreateButton({Name="初始化ESP2",Callback=function()
@@ -1434,39 +1492,96 @@ do
 end
 
 -- ==========================================
--- 物品ESP Tab（左右，表驱动）
+-- 物品ESP Tab（单心跳 + DescendantAdded）
+-- ==========================================
+-- ==========================================
+-- 物品ESP Tab（加总开关）
 -- ==========================================
 local PG_Item_L = ItemTab:AddLeftGroupbox({Name="变卖物",Icon="coins"})
 local PG_Item_R = ItemTab:AddRightGroupbox({Name="枪械/其他",Icon="crosshair"})
 do
+    local ActiveTags = {}
+    local TARGETS = {}
+    local ItemESPActive = false   -- ⭐ 总开关
+
+    local function clearTag(obj)
+        if not obj then return end
+        local hl = obj:FindFirstChild("ESP_Highlight")
+        if hl then pcall(function() hl:Destroy() end) end
+        local bb = obj:FindFirstChild("ESP_Tag")
+        if bb then pcall(function() bb:Destroy() end) end
+        ActiveTags[obj] = nil
+    end
+
     local function mk(obj,col,label,icon)
+        if not ItemESPActive then return end
         if obj:FindFirstChild("ESP_Highlight") then return end
         local hl=Instance.new("Highlight",obj); hl.Name="ESP_Highlight"; hl.FillColor=col; hl.FillTransparency=0.2; hl.OutlineColor=col; hl.OutlineTransparency=0.05; hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
         local bb=Instance.new("BillboardGui",obj); bb.Name="ESP_Tag"; bb.Size=UDim2.new(0,180,0,45); bb.StudsOffset=Vector3.new(0,3,0); bb.AlwaysOnTop=true; bb.MaxDistance=999999
         local tl=Instance.new("TextLabel",bb); tl.Size=UDim2.new(1,0,0.5,0); tl.BackgroundTransparency=1; tl.Text=(icon or "").." "..(label or obj.Name); tl.TextColor3=col; tl.TextScaled=true; tl.Font=Enum.Font.GothamBold; tl.TextStrokeTransparency=0.3
         local dl=Instance.new("TextLabel",bb); dl.Size=UDim2.new(1,0,0.5,0); dl.Position=UDim2.new(0,0,0.5,0); dl.BackgroundTransparency=1; dl.Text=" --m"; dl.TextColor3=Color3.new(1,1,1); dl.TextScaled=true; dl.Font=Enum.Font.GothamBold; dl.TextStrokeTransparency=0.3
-        RunService.Heartbeat:Connect(function()
-            local c=LP.Character; local r=c and c:FindFirstChild("HumanoidRootPart"); if not r or not obj or not obj.Parent then return end
-            local pos; if obj:IsA("BasePart") then pos=obj.Position elseif obj:IsA("Model") and obj.PrimaryPart then pos=obj.PrimaryPart.Position elseif obj:IsA("Model") then for _,p in ipairs(obj:GetDescendants()) do if p:IsA("BasePart") then pos=p.Position; break end end end
-            if pos then dl.Text=string.format(" %.1fm",(r.Position-pos).Magnitude) end
-        end)
+        ActiveTags[obj]=dl
     end
+
+    RunService.Heartbeat:Connect(function()
+        if not ItemESPActive then return end
+        local c=LP.Character; local r=c and c:FindFirstChild("HumanoidRootPart")
+        if not r then return end
+        for obj, dl in pairs(ActiveTags) do
+            if not obj.Parent then ActiveTags[obj]=nil; continue end
+            local pos
+            if obj:IsA("BasePart") then pos=obj.Position
+            elseif obj:IsA("Model") then
+                local pp=obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                pos=pp and pp.Position
+            end
+            if pos then dl.Text=string.format(" %.1fm",(r.Position-pos).Magnitude) end
+        end
+    end)
+
     local function scan(name,col,label,icon)
+        if not ItemESPActive then N("ESP物品","请先开启总开关"); return end
         local n=0
-        for _,obj in ipairs(workspace:GetDescendants()) do if (obj:IsA("BasePart") or obj:IsA("Model")) and obj.Name==name then mk(obj,col,label,icon); n=n+1 end end
+        for _,obj in ipairs(workspace:GetDescendants()) do
+            if (obj:IsA("BasePart") or obj:IsA("Model")) and obj.Name==name then mk(obj,col,label,icon); n=n+1 end
+        end
         N("ESP物品","标记 "..n.." 个 "..label)
     end
-    local function auto(name,col,label,icon)
-        task.spawn(function()
-            while true do task.wait(5)
-                for _,obj in ipairs(workspace:GetDescendants()) do if (obj:IsA("BasePart") or obj:IsA("Model")) and obj.Name==name and not obj:FindFirstChild("ESP_Highlight") then mk(obj,col,label,icon) end end
+
+    local function reg(name,col,label,icon)
+        TARGETS[name]={col=col,label=label,icon=icon}
+    end
+
+    workspace.DescendantAdded:Connect(function(obj)
+        if not ItemESPActive then return end   -- ⭐ 总开关关了就不标记
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            local cfg=TARGETS[obj.Name]
+            if cfg then mk(obj,cfg.col,cfg.label,cfg.icon) end
+        end
+    end)
+
+    -- ⭐ 总开关，默认关
+    PG_Item_L:CreateToggle({
+        Name = "启用物品ESP",
+        CurrentValue = false,
+        Flag = "ItemESP_On",
+        Callback = function(v)
+            ItemESPActive = v
+            if not v then
+                -- 关闭时清掉所有已标记
+                for obj in pairs(ActiveTags) do clearTag(obj) end
+                for _,obj in ipairs(workspace:GetDescendants()) do
+                    if obj:FindFirstChild("ESP_Highlight") then clearTag(obj) end
+                end
             end
-        end)
-    end
+            N("ESP物品", v and "已开启" or "已关闭")
+        end,
+    })
+
     local function btn(group,name,col,label,icon)
-        group:CreateButton({Name=icon.." "..label,Callback=function() scan(name,col,label,icon); auto(name,col,label,icon) end})
+        reg(name,col,label,icon)
+        group:CreateButton({Name=(icon~="" and icon.." " or "")..label,Callback=function() scan(name,col,label,icon) end})
     end
-    -- 变卖物
     btn(PG_Item_L,"MoneyPrinter",Color3.fromRGB(0,220,80),"印钞机","")
     btn(PG_Item_L,"Gold Bar",Color3.fromRGB(255,210,0),"金块","")
     btn(PG_Item_L,"Bitcoin",Color3.fromRGB(255,153,0),"比特币","")
@@ -1478,7 +1593,6 @@ do
     btn(PG_Item_L,"MilitaryChest",Color3.fromRGB(80,200,50),"军需箱","")
     btn(PG_Item_L,"GPU",Color3.fromRGB(50,220,255),"显卡","")
     btn(PG_Item_L,"Cargo Card",Color3.fromRGB(50,100,255),"货物卡","")
-    -- 枪械
     btn(PG_Item_R,"AK-47",Color3.fromRGB(255,80,0),"AK-47","")
     btn(PG_Item_R,"AUG A1",Color3.fromRGB(160,50,255),"AUG A1","")
     btn(PG_Item_R,"AWM",Color3.fromRGB(255,50,50),"AWM","")
@@ -1488,7 +1602,7 @@ do
 end
 
 -- ==========================================
--- 删除 Tab（左右）
+-- 删除 Tab
 -- ==========================================
 local PG_Del_L = DeleteTab:AddLeftGroupbox({Name="删除对象",Icon="trash-2"})
 local PG_Del_R = DeleteTab:AddRightGroupbox({Name="说明",Icon="info"})
@@ -1509,7 +1623,7 @@ do
 end
 
 -- ==========================================
--- 娱乐 Tab（左右）
+-- 娱乐 Tab（补完天黑2）
 -- ==========================================
 local PG_Fun_L = FunTab:AddLeftGroupbox({Name="娱乐功能",Icon="zap"})
 local PG_Fun_R = FunTab:AddRightGroupbox({Name="天气/光照",Icon="cloud"})
@@ -1525,9 +1639,9 @@ do
         end)
     end})
     PG_Fun_L:CreateSlider({Name="燃烧间隔",Range={0.05,2},Increment=0.05,CurrentValue=0.2,Flag="BurnInt",Callback=function(v) bint=v end})
-    PG_Fun_L:CreateButton({Name="大肥鱼小宠物",Callback=function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/%E5%8A%A8%E7%94%BB%E5%BC%B9%E8%B7%B3.lua"))() end})
-    PG_Fun_L:CreateButton({Name="创造与魔法",Callback=function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/Saint-Orry/refs/heads/main/3.lua"))() end})
-    PG_Fun_R:CreateButton({Name="天气",Callback=function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/Saint-Orry/refs/heads/main/%E9%80%9A%E7%BC%89%E5%A4%A9%E6%B0%94.lua"))() end})
+    PG_Fun_L:CreateButton({Name="大肥鱼小宠物",Callback=function() task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/%E5%8A%A8%E7%94%BB%E5%BC%B9%E8%B7%B3.lua"))() end) end})
+    PG_Fun_L:CreateButton({Name="创造与魔法",Callback=function() task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/Saint-Orry/refs/heads/main/3.lua"))() end) end})
+    PG_Fun_R:CreateButton({Name="天气",Callback=function() task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/ggsq1741-debug/Saint-Orry/refs/heads/main/%E9%80%9A%E7%BC%89%E5%A4%A9%E6%B0%94.lua"))() end) end})
     PG_Fun_R:CreateButton({Name="天黑1",Callback=function()
         local L=game:GetService("Lighting")
         task.spawn(function()
@@ -1541,7 +1655,16 @@ do
     PG_Fun_R:CreateButton({Name="天黑2",Callback=function()
         local L=game:GetService("Lighting")
         L.ClockTime=2; L.Brightness=0.35; L.Ambient=Color3.new(0.12,0.12,0.18); L.OutdoorAmbient=Color3.new(0.10,0.10,0.15); L.GlobalShadows=true
-        local s=L:FindFirstChild("Realistic Skybox"); if s then s.TimeOfDay=0.15; s.StarsVisible=true; s.MoonBrightness=1; s.SunBrightness=0 end
+        local s=L:FindFirstChild("Realistic Skybox")
+        if s then s.TimeOfDay=0.15; s.StarsVisible=true; s.MoonBrightness=1; s.SunBrightness=0 end
+        N("天黑2","已应用")
+    end})
+    PG_Fun_R:CreateButton({Name="恢复白天",Callback=function()
+        local L=game:GetService("Lighting")
+        L.ClockTime=14; L.Brightness=2; L.Ambient=Color3.fromRGB(70,70,70); L.OutdoorAmbient=Color3.fromRGB(128,128,128); L.GlobalShadows=true
+        local s=L:FindFirstChild("Realistic Skybox")
+        if s then s.TimeOfDay=14; s.StarsVisible=false; s.MoonBrightness=0; s.SunBrightness=1 end
+        N("白天","已恢复")
     end})
 end
 
