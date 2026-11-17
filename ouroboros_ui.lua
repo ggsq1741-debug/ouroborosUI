@@ -1,5 +1,5 @@
 local SCRIPT_NAME = "港猫的通缉Wanted"
-local SCRIPT_VERSION = "v4.1"
+local SCRIPT_VERSION = "v5.0"
 
 local imgUrl = "https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/6979f443-2573-4441-a216-64c1eb2ee5df.png"
 local fileName = "ouro_toggle_img.png"
@@ -398,25 +398,70 @@ local PG_Flup_R = flupTab:AddRightGroupbox({Name="参数与说明",Icon="move"})
 PG_Flup_L:CreateButton({
     Name = "删除忍者图标和脚本",
     Callback = function()
-        local CoreGui = game:GetService("CoreGui")
-        local targetHash = "fdcc4aea07a75898254f573dbd0c67061fc06e508fdd69b5dbfde0ba64913d0c"
-        local deleted = false
-        for _, child in ipairs(CoreGui:GetChildren()) do
-            if string.find(child.Name, targetHash, 1, true) then
-                local ok = pcall(function() child:Destroy() end)
-                if ok then deleted = true end
-            end
-        end
-        if not deleted then
-            for _, v in ipairs(CoreGui:GetDescendants()) do
-                if string.find(v.Name, targetHash, 1, true) then
-                    pcall(function() v:Destroy() end)
-                    deleted = true
+        task.spawn(function()
+            if getgenv()._DK then N("提示", "清理脚本已在运行中", 3) return end
+            getgenv()._DK = true
+
+            local function hui()
+                if type(gethui) == "function" then
+                    local ok, r = pcall(gethui)
+                    if ok and r then return r end
                 end
+                for _, n in ipairs({"get_hidden_gui", "get_hidden_ui", "getprotectedui"}) do
+                    local f = rawget(getfenv(), n)
+                    if type(f) == "function" then
+                        local ok, r = pcall(f)
+                        if ok and r then return r end
+                    end
+                end
+                return nil
             end
-        end
-        if deleted then N("清理成功", "已删除目标核心文件夹", 3)
-        else N("提示", "未找到该目标，可能已被清理", 3) end
+
+            local H = hui()
+            if not H then
+                N("清理失败", "当前执行器不支持获取隐藏 UI", 4)
+                return
+            end
+
+            local function bad(c)
+                if not c:IsA("ScreenGui") then return false end
+                local n = c.Name
+                if n == "TopbarStandard" or n == "TopbarCentered" then return false end
+                if n == "NinjaManager" then return false end
+                for i = 1, #n do
+                    if string.byte(n, i) > 127 then return true end
+                end
+                return n:match("^[^%w_%s]") ~= nil
+            end
+
+            local function clean()
+                local k = 0
+                for _, c in ipairs(H:GetChildren()) do
+                    if bad(c) then
+                        pcall(function() c:Destroy() end)
+                        k = k + 1
+                    end
+                end
+                return k
+            end
+
+            local n = clean()
+            N("清理成功", "首次清理了 " .. n .. " 个隐藏 UI", 3)
+
+            -- 防新加入
+            H.ChildAdded:Connect(function()
+                task.wait(0.1)
+                clean()
+            end)
+
+            -- 定时清理
+            task.spawn(function()
+                while getgenv()._DK do
+                    task.wait(1)
+                    clean()
+                end
+            end)
+        end)
     end,
 })
 
