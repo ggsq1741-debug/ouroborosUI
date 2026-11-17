@@ -334,82 +334,244 @@ PG_Flup_L:CreateButton({
 })
 
 -- ==========================================
--- 统一范围模块（防录屏 Tab 和 Range Tab 共用）
+-- 统一范围模块（双样式 + 原始属性备份 + 范围Tab白名单）
 -- ==========================================
-local RangeModule = {Enabled=false, Size=8, On=false}
-local rangeConns={}
-local function applyRangePart(hrp, s)
-    hrp.Size=Vector3.new(s,s,s)
-    hrp.Transparency=0.85
-    hrp.Color=Color3.fromRGB(190,190,190)
-    hrp.Material=Enum.Material.Neon
-    hrp.CanCollide=false
+local RangeA = {Enabled=false, Size=8, Transparency=1,    Material=Enum.Material.ForceField} -- 防录屏:透明,全体生效
+local RangeB = {Enabled=false, Size=8, Transparency=0.85, Material=Enum.Material.Neon}        -- 范围Tab:半透明,仅白名单生效
+
+local rangeConns = {}
+local RangeOrig  = {}                     -- [hrp] = 原始属性备份
+_G.RangeWL       = _G.RangeWL or {}       -- 范围白名单: [玩家名] = true
+
+-- 是否命中白名单
+local function isWL(p)
+    return p ~= nil and _G.RangeWL[p.Name] == true
 end
+
+-- 备份原始属性（只备份一次）
+local function saveOrig(hrp)
+    if RangeOrig[hrp] then return end
+    RangeOrig[hrp] = {
+        Size         = hrp.Size,
+        Transparency = hrp.Transparency,
+        Color        = hrp.Color,
+        Material     = hrp.Material,
+        CanCollide   = hrp.CanCollide,
+    }
+end
+
+local function applyRangePart(hrp, s, cfg)
+    saveOrig(hrp)
+    hrp.Size         = Vector3.new(s,s,s)
+    hrp.Transparency = cfg.Transparency
+    hrp.Color        = Color3.fromRGB(190,190,190)
+    hrp.Material     = cfg.Material
+    hrp.CanCollide   = false
+end
+
+-- 还原为原始值（修复白色方块）
 local function resetRangePart(hrp)
-    hrp.Size=Vector3.new(2,2,1)
-    hrp.Transparency=0
-    hrp.Color=Color3.fromRGB(163,162,165)
-    hrp.Material=Enum.Material.Plastic
-    hrp.CanCollide=true
+    local o = RangeOrig[hrp]
+    if not o then return end
+    hrp.Size         = o.Size
+    hrp.Transparency = o.Transparency
+    hrp.Color        = o.Color
+    hrp.Material     = o.Material
+    hrp.CanCollide   = o.CanCollide
+    RangeOrig[hrp]   = nil
 end
-local function applyRangeAll()
-    local s=math.clamp(RangeModule.Size,1,100)
+
+-- 单玩家应用 / 还原
+local function applyRangeToPlayer(p, cfg)
+    if not p or p==LP or not p.Character then return end
+    local h = p.Character:FindFirstChild("HumanoidRootPart")
+    if h then pcall(applyRangePart, h, math.clamp(cfg.Size,1,100), cfg) end
+end
+local function resetRangeToPlayer(p)
+    if not p or p==LP or not p.Character then return end
+    local h = p.Character:FindFirstChild("HumanoidRootPart")
+    if h then pcall(resetRangePart, h) end
+end
+
+-- 全体应用：RangeA 全员 / RangeB 仅白名单
+local function applyRangeAll(cfg)
     for _,p in ipairs(Players:GetPlayers()) do
-        if p~=LP and p.Character then
-            local h=p.Character:FindFirstChild("HumanoidRootPart")
-            if h then pcall(applyRangePart,h,s) end
+        if p~=LP then
+            if cfg == RangeB then
+                if isWL(p) then applyRangeToPlayer(p, cfg) end
+            else
+                applyRangeToPlayer(p, cfg)
+            end
         end
     end
 end
+
 local function resetRangeAll()
     for _,p in ipairs(Players:GetPlayers()) do
-        if p~=LP and p.Character then
-            local h=p.Character:FindFirstChild("HumanoidRootPart")
-            if h then pcall(resetRangePart,h) end
-        end
+        if p~=LP then resetRangeToPlayer(p) end
     end
 end
+
+-- 玩家重生时按各自状态恢复
 local function bindRangePlayer(p)
     if p==LP then return end
     if rangeConns[p] then rangeConns[p]:Disconnect() end
-    rangeConns[p]=p.CharacterAdded:Connect(function()
+    rangeConns[p] = p.CharacterAdded:Connect(function()
         task.wait(1)
-        if RangeModule.Enabled then
-            local h=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-            if h then pcall(applyRangePart,h,math.clamp(RangeModule.Size,1,100)) end
+        local h = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+        if not h then return end
+        if RangeA.Enabled then
+            pcall(applyRangePart, h, math.clamp(RangeA.Size,1,100), RangeA)
+        elseif RangeB.Enabled and isWL(p) then
+            pcall(applyRangePart, h, math.clamp(RangeB.Size,1,100), RangeB)
         end
     end)
 end
+
 for _,p in ipairs(Players:GetPlayers()) do bindRangePlayer(p) end
 Players.PlayerAdded:Connect(bindRangePlayer)
-local function setRange(on)
-    if on==RangeModule.Enabled then return end
-    RangeModule.Enabled=on
-    if on then applyRangeAll() else resetRangeAll() end
+Players.PlayerRemoving:Connect(function(p)
+    if p.Character then RangeOrig[p.Character:FindFirstChild("HumanoidRootPart")] = nil end
+end)
+
+-- 互斥开关
+local function setRangeA(on)
+    if on==RangeA.Enabled then return end
+    RangeA.Enabled = on
+    if on then RangeB.Enabled=false; applyRangeAll(RangeA)
+    else resetRangeAll() end
+end
+local function setRangeB(on)
+    if on==RangeB.Enabled then return end
+    RangeB.Enabled = on
+    if on then
+        RangeA.Enabled = false
+        local cnt = 0
+        for _ in pairs(_G.RangeWL) do cnt=cnt+1 end
+        if cnt==0 then N("范围","白名单为空,请先勾选玩家",4) end
+        applyRangeAll(RangeB)
+    else
+        resetRangeAll()
+    end
 end
 
+-- ==========================================
+-- 防录屏 Tab 范围控件（透明,全体生效）
+-- ==========================================
 PG_Flup_L:CreateToggle({
     Name = "开启范围",
     CurrentValue = false,
     Flag = "Flup_BT_Enable",
     Callback = function(state)
-        setRange(state)
-        if state then N("范围","已开启",3) else N("范围","已关闭",3) end
+        setRangeA(state)
+        if state then N("范围","已开启(透明·全体)",3) else N("范围","已关闭",3) end
     end,
 })
+
 PG_Flup_R:CreateSlider({
     Name = "范围大小",
-    Range = {1, 100}, Increment = 1, CurrentValue = 8, Flag = "Flup_BT_Size",
+    Range = {1,100}, Increment = 1, CurrentValue = 8, Flag = "Flup_BT_Size",
     Callback = function(value)
-        RangeModule.Size = value
-        if RangeModule.Enabled then applyRangeAll() end
+        RangeA.Size = value
+        if RangeA.Enabled then applyRangeAll(RangeA) end
     end,
 })
+
 PG_Flup_R:CreateButton({
     Name = "功能说明",
     Callback = function()
-        N("防录屏/范围说明", "1. 删除防录屏用于清理本地核心脚本。\n2. 开启范围后，敌人碰撞箱隐形放大，关闭后需过几秒恢复正常。", 6)
+        N("防录屏/范围说明",
+          "1. 删除防录屏用于清理本地核心脚本。\n2. 开启范围后，敌人碰撞箱隐形放大（完全透明），作用于全体玩家。\n3. 范围 Tab 的白名单仅控制范围 Tab，不影响此处。",6)
     end,
+})
+
+-- ==========================================
+-- 范围 Tab 控件（半透明,仅白名单生效）
+-- ==========================================
+local PG_Range_L = RangeTab:AddLeftGroupbox({Name="范围",Icon="move"})
+local PG_Range_R = RangeTab:AddRightGroupbox({Name="参数",Icon="sliders"})
+
+PG_Range_L:CreateToggle({
+    Name="范围",
+    CurrentValue=false,
+    Flag="RangeOn",
+    Callback=function(v)
+        setRangeB(v)
+    end
+})
+
+PG_Range_R:CreateSlider({
+    Name="范围大小",
+    Range={1,100}, Increment=1, CurrentValue=8, Flag="RangeSz",
+    Callback=function(v)
+        RangeB.Size=v
+        if RangeB.Enabled then applyRangeAll(RangeB) end
+    end
+})
+
+-- ==========================================
+-- 范围 Tab 白名单（勾选=生效,显示昵称 + 用户名）
+-- ==========================================
+local PG_Range_WL = RangeTab:AddRightGroupbox({Name="范围白名单",Icon="shield"})
+local wlCreated = {}
+
+local function wlAdd(plr)
+    local name = plr.Name
+    if wlCreated[name] then return end
+    local dn = plr.DisplayName
+    local display = (dn ~= "" and dn ~= name)
+        and (dn .. " (@" .. name .. ")")
+        or name
+    local cur = (_G.RangeWL[name] == true)
+
+    local t = PG_Range_WL:CreateToggle({
+        Name = display,
+        CurrentValue = cur,
+        Flag = "RangeWL_" .. name,
+        Callback = function(v)
+            _G.RangeWL = _G.RangeWL or {}
+            if v then
+                _G.RangeWL[name] = true
+                -- 范围已开启时立即对该玩家生效
+                if RangeA.Enabled then
+                    applyRangeToPlayer(plr, RangeA)
+                elseif RangeB.Enabled then
+                    applyRangeToPlayer(plr, RangeB)
+                end
+            else
+                _G.RangeWL[name] = nil
+                -- 取消勾选立即还原
+                resetRangeToPlayer(plr)
+            end
+        end
+    })
+    wlCreated[name] = t
+end
+
+local function wlRemove(name)
+    local t = wlCreated[name]
+    if t then pcall(function() t:Destroy() end); wlCreated[name] = nil end
+    if _G.RangeWL then _G.RangeWL[name] = nil end
+end
+
+for _,p in ipairs(Players:GetPlayers()) do
+    if p~=LP then wlAdd(p) end
+end
+Players.PlayerAdded:Connect(function(p)
+    if p~=LP then task.wait(0.3); wlAdd(p) end
+end)
+Players.PlayerRemoving:Connect(function(p)
+    if p~=LP then wlRemove(p.Name) end
+end)
+
+PG_Range_WL:CreateButton({
+    Name="刷新白名单列表",
+    Callback=function()
+        for _,p in ipairs(Players:GetPlayers()) do
+            if p~=LP then wlAdd(p) end
+        end
+        N("范围白名单","已刷新")
+    end
 })
 
 -- ==========================================
@@ -1234,13 +1396,6 @@ PG_Aim_L:CreateDropdown({
         })
     end
 end
--- ==========================================
--- 范围 Tab（调用统一模块）
--- ==========================================
-local PG_Range_L = RangeTab:AddLeftGroupbox({Name="范围",Icon="move"})
-local PG_Range_R = RangeTab:AddRightGroupbox({Name="参数",Icon="sliders"})
-PG_Range_L:CreateToggle({Name="范围",CurrentValue=false,Flag="RangeOn",Callback=function(v) setRange(v) end})
-PG_Range_R:CreateSlider({Name="范围大小",Range={1,100},Increment=1,CurrentValue=8,Flag="RangeSz",Callback=function(v) RangeModule.Size=v; if RangeModule.Enabled then applyRangeAll() end end})
 
 local PG_Silent_L = SilentTab:AddLeftGroupbox({Name="静默瞄准",Icon="target"})
 local PG_Silent_R = SilentTab:AddRightGroupbox({Name="白名单(勾上=不打)",Icon="shield"})
