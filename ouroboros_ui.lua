@@ -301,7 +301,94 @@ PG_Main_R2:CreateButton({Name="空中定住",Callback=function()
         end
     end)
 end})
+-- ==========================================
+-- 实时信息（玩家 Tab 右侧）
+-- ==========================================
+local PG_Main_R3 = MainTab:AddLeftGroupbox({Name="实时信息",Icon="activity"})
 
+-- FPS 计算
+local fpsValue, fpsAcc, fpsFrames = 60, 0, 0
+RunService.RenderStepped:Connect(function(dt)
+    fpsAcc = fpsAcc + dt
+    fpsFrames = fpsFrames + 1
+    if fpsAcc >= 0.5 then
+        fpsValue = math.floor(fpsFrames / fpsAcc + 0.5)
+        fpsAcc, fpsFrames = 0, 0
+    end
+end)
+
+-- 延迟
+local function getPing()
+    local ok, ping = pcall(function()
+        return math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
+    end)
+    if ok and ping then return tostring(ping) .. " ms" end
+    return "-"
+end
+
+-- 最近敌人
+local function getNearestEnemy()
+    local c = LP.Character
+    local root = c and c:FindFirstChild("HumanoidRootPart")
+    if not root then return "-" end
+    local best, bestD = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character then
+            local pr = p.Character:FindFirstChild("HumanoidRootPart")
+            local ph = p.Character:FindFirstChildOfClass("Humanoid")
+            if pr and ph and ph.Health > 0 then
+                local d = (pr.Position - root.Position).Magnitude
+                if d < bestD then bestD = d; best = p.Name end
+            end
+        end
+    end
+    if best then return string.format("%s (%.0fm)", best, bestD) end
+    return "-"
+end
+
+-- 状态列表
+local okStatus = pcall(function()
+    PG_Main_R3:CreateStatusList({
+        Name = "运行状态",
+        MaxRows = 6,
+        UpdateRate = 1,
+        Update = function()
+            local c = LP.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            local root = c and c:FindFirstChild("HumanoidRootPart")
+            local rows = {}
+
+            table.insert(rows, { Text = "在线人数", Value = tostring(#Players:GetPlayers()) })
+            table.insert(rows, { Text = "FPS",     Value = tostring(fpsValue) })
+            table.insert(rows, { Text = "延迟",    Value = getPing() })
+
+            if h then
+                table.insert(rows, { Text = "血量",
+                    Value = string.format("%d / %d", math.floor(h.Health), math.floor(h.MaxHealth)) })
+            else
+                table.insert(rows, { Text = "血量", Value = "-" })
+            end
+
+            if root then
+                table.insert(rows, { Text = "坐标",
+                    Value = string.format("%.0f, %.0f, %.0f", root.Position.X, root.Position.Y, root.Position.Z) })
+            else
+                table.insert(rows, { Text = "坐标", Value = "-" })
+            end
+
+            table.insert(rows, { Text = "最近敌人", Value = getNearestEnemy() })
+
+            return rows
+        end,
+    })
+end)
+
+if not okStatus then
+    PG_Main_R3:CreateButton({
+        Name = "该UI版本不支持状态列表",
+        Callback = function() end,
+    })
+end
 -- ==========================================
 -- 防录屏设置选项 Tab
 -- ==========================================
@@ -2051,33 +2138,5 @@ task.spawn(function()
     local ok, gethui = pcall(function() return gethui() end)
     if ok and gethui then
         HookGui(gethui())
-    end
-end)
-
-
-local UserInputService = game:GetService("UserInputService")
-local uiVisible = true
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    -- 如果是在输入框里打字，就不触发
-    if gameProcessed then return end 
-    
-    if input.KeyCode == Enum.KeyCode.F then
-        uiVisible = not uiVisible
-        
-        -- 同时隐藏/显示窗口和左侧的开关图标
-        pcall(function()
-            Window:SetVisible(uiVisible) 
-        end)
-        
-        -- 如果上面的方法不起作用，尝试直接改 ScreenGui
-        pcall(function()
-            local coreGui = game:GetService("CoreGui")
-            local playerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-            local gui = coreGui:FindFirstChild("Ouroboros") or playerGui:FindFirstChild("Ouroboros")
-            if gui then
-                gui.Enabled = uiVisible
-            end
-        end)
     end
 end)
