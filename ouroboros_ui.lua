@@ -60,6 +60,7 @@ local ItemTab   = Window:CreateTab({ Name = "物品ESP",    Icon = "box" })
 local DeleteTab = Window:CreateTab({ Name = "删除",       Icon = "trash-2" })
 local FunTab    = Window:CreateTab({ Name = "娱乐",       Icon = "zap" })
 local ShopTab   = Window:CreateTab({ Name = "购买",       Icon = "shopping-cart" })
+local FPSTab   = Window:CreateTab({ Name = "FPS优化",       Icon = "rbxassetid://94212016861936" })
 local SettingsTab = Window:CreateTab({ Name = "设置",     Icon = "settings" })
 
 local Players=game:GetService("Players")
@@ -2010,44 +2011,392 @@ do
 end
 
 -- ==========================================
--- 购买 Tab（左右）
+-- 购买 Tab（纯开关版）
 -- ==========================================
-local PG_Shop_L = ShopTab:AddLeftGroupbox({Name="自动出售",Icon="dollar-sign"})
-local PG_Shop_R = ShopTab:AddRightGroupbox({Name="购买/补弹",Icon="shopping-cart"})
 do
-    local function getNet() local df=RS:FindFirstChild("Devv") or RS:FindFirstChild("devv"); if not df then return nil end; return require(df).load("Network") end
-    local selling=false
-    PG_Shop_L:CreateButton({Name="奥菲当铺循环出售",Callback=function()
-        if selling then N("出售","已在运行"); return end; selling=true
-        task.spawn(function()
-            local Net=getNet(); if not Net then selling=false; N("出售","需在游戏内"); return end
-            local IS=Net.InvokeServer; local SP=Vector3.new(-2826,37,1738); local R=150; local last=0
-            while true do
-                pcall(function()
-                    local c=LP.Character; local h=c and c:FindFirstChild("HumanoidRootPart")
-                    if h and (h.Position-SP).Magnitude<=R then local now=tick(); if now-last>0.1 then IS("sellLoot","Ofy"); last=now end end
-                end)
-                task.wait(0.01)
-            end
-        end)
-        N("出售","循环已启动")
-    end})
-    PG_Shop_R:CreateButton({Name="C4 购买（250元）",Callback=function()
-        local Net=getNet(); if not Net then N("购买","需在游戏内"); return end
-        local o,e=pcall(function() Net.InvokeServer("purchaseAmmo",{itemName="C4",itemType="Ammo",ammoToBuyIndex=1,categoryName="Explosives",shopName="Guns"}) end)
-        N("购买",o and "C4请求已发" or ("失败: "..tostring(e)))
-    end})
-    local refill=false
-    PG_Shop_R:CreateButton({Name="循环补充弹药",Callback=function()
-        if refill then N("补弹","已在运行"); return end; refill=true
-        task.spawn(function()
-            local Net=getNet(); if not Net then refill=false; N("补弹","需在游戏内"); return end
-            while true do pcall(function() Net.InvokeServer("purchaseAmmo",{refillAll=true}) end); task.wait(0.1) end
-        end)
-        N("补弹","循环已启动")
-    end})
-end
+    local SHOP = { Selling = false, BuyingC4 = false, Refilling = false }
 
+    local function getNet()
+        local df = RS:FindFirstChild("Devv") or RS:FindFirstChild("devv")
+        if not df then return nil end
+        local ok, mod = pcall(require, df)
+        if not ok or not mod then return nil end
+        local ok2, net = pcall(function() return mod.load("Network") end)
+        if not ok2 then return nil end
+        return net
+    end
+
+    -- 循环出售（0.1 秒一次）
+    task.spawn(function()
+        local last = 0
+        while true do
+            task.wait(0.05)
+            if SHOP.Selling then
+                local now = tick()
+                if now - last >= 0.1 then
+                    last = now
+                    local Net = getNet()
+                    if Net then
+                        local ok, err = pcall(function()
+                            local c = LP.Character
+                            local h = c and c:FindFirstChild("HumanoidRootPart")
+                            if h and (h.Position - Vector3.new(-2826, 37, 1738)).Magnitude <= 150 then
+                                Net.InvokeServer("sellLoot", "Ofy")
+                            end
+                        end)
+                        if not ok then
+                            SHOP.Selling = false
+                            N("出售出错", tostring(err), 6)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 循环买 C4（1 秒一次）
+    task.spawn(function()
+        local acc = 0
+        while true do
+            local dt = task.wait(0.05)
+            if SHOP.BuyingC4 then
+                acc = acc + dt
+                if acc >= 1.0 then
+                    acc = 0
+                    local Net = getNet()
+                    if Net then
+                        local ok, err = pcall(function()
+                            Net.InvokeServer("purchaseAmmo", {
+                                itemName       = "C4",
+                                itemType       = "Ammo",
+                                ammoToBuyIndex = 1,
+                                categoryName   = "Explosives",
+                                shopName       = "Guns",
+                            })
+                        end)
+                        if not ok then
+                            SHOP.BuyingC4 = false
+                            N("购买出错", tostring(err), 8)
+                        end
+                    end
+                end
+            else
+                acc = 0
+            end
+        end
+    end)
+
+    -- 循环补弹（0.1 秒一次）
+    task.spawn(function()
+        local acc = 0
+        while true do
+            local dt = task.wait(0.05)
+            if SHOP.Refilling then
+                acc = acc + dt
+                if acc >= 0.1 then
+                    acc = 0
+                    local Net = getNet()
+                    if Net then
+                        local ok, err = pcall(function()
+                            Net.InvokeServer("purchaseAmmo", { refillAll = true })
+                        end)
+                        if not ok then
+                            SHOP.Refilling = false
+                            N("补弹出错", tostring(err), 8)
+                        end
+                    end
+                end
+            else
+                acc = 0
+            end
+        end
+    end)
+
+    local PG_Shop_L = ShopTab:AddLeftGroupbox({ Name = "自动出售", Icon = "dollar-sign" })
+    local PG_Shop_R = ShopTab:AddRightGroupbox({ Name = "购买 / 补弹", Icon = "shopping-cart" })
+
+    PG_Shop_L:CreateToggle({
+        Name = "奥菲当铺循环出售",
+        CurrentValue = false,
+        Flag = "Shop_SellLoop",
+        Callback = function(v) SHOP.Selling = v end,
+    })
+
+    PG_Shop_R:CreateToggle({
+        Name = "循环购买 C4（250元）",
+        CurrentValue = false,
+        Flag = "Shop_C4Loop",
+        Callback = function(v) SHOP.BuyingC4 = v end,
+    })
+
+    PG_Shop_R:CreateToggle({
+        Name = "循环补充弹药",
+        CurrentValue = false,
+        Flag = "Shop_Refill",
+        Callback = function(v) SHOP.Refilling = v end,
+    })
+end
+-- ==========================================
+-- FPS优化 Tab（性能降质移植版）
+-- ==========================================
+do
+    local PERF = {
+        Particles = false,
+        Shadows   = false,
+        Effects   = false,
+        Materials = false,
+        Water     = false,
+    }
+
+    local particleRecords, particleSeen = {}, {}
+    local effectRecords, effectSeen     = {}, {}
+    local materialRecords, materialSeen = {}, {}
+    local waterRecord, shadowRecord     = nil, nil
+
+    -- ===== 粒子 =====
+    local PARTICLE_CLASS = {
+        ParticleEmitter = true, Smoke = true, Fire = true,
+        Sparkles = true, Trail = true, Beam = true,
+    }
+
+    local function disableOneParticle(obj)
+        if particleSeen[obj] then return end
+        local okVal, was = pcall(function() return obj.Enabled end)
+        if not okVal then return end
+        particleSeen[obj] = true
+        table.insert(particleRecords, { obj = obj, was = was })
+        pcall(function() obj.Enabled = false end)
+    end
+
+    local function applyParticles(on)
+        PERF.Particles = on
+        if on then
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if PARTICLE_CLASS[obj.ClassName] then disableOneParticle(obj) end
+            end
+            return 0
+        else
+            local n = 0
+            for _, rec in ipairs(particleRecords) do
+                local obj = rec.obj
+                if obj and obj.Parent then
+                    pcall(function() obj.Enabled = rec.was end)
+                    n = n + 1
+                end
+            end
+            particleRecords, particleSeen = {}, {}
+            return n
+        end
+    end
+
+    workspace.DescendantAdded:Connect(function(obj)
+        if PERF.Particles and PARTICLE_CLASS[obj.ClassName] then
+            task.defer(function()
+                if obj and obj.Parent and PERF.Particles then disableOneParticle(obj) end
+            end)
+        end
+    end)
+
+    -- ===== 阴影 =====
+    local function applyShadows(on)
+        PERF.Shadows = on
+        if on then
+            if shadowRecord == nil then shadowRecord = Lighting.GlobalShadows end
+            Lighting.GlobalShadows = false
+        elseif shadowRecord ~= nil then
+            Lighting.GlobalShadows = shadowRecord
+            shadowRecord = nil
+        end
+    end
+
+    -- ===== 后处理 =====
+    local EFFECT_CLASS = {
+        Atmosphere = true, BloomEffect = true, BlurEffect = true,
+        DepthOfFieldEffect = true, SunRaysEffect = true,
+    }
+
+    local function applyEffects(on)
+        PERF.Effects = on
+        if on then
+            for _, obj in ipairs(Lighting:GetDescendants()) do
+                if EFFECT_CLASS[obj.ClassName] and not effectSeen[obj] then
+                    local okVal, was = pcall(function() return obj.Enabled end)
+                    if okVal then
+                        effectSeen[obj] = true
+                        table.insert(effectRecords, { obj = obj, was = was })
+                        pcall(function() obj.Enabled = false end)
+                    end
+                end
+            end
+            return 0
+        else
+            local n = 0
+            for _, rec in ipairs(effectRecords) do
+                local obj = rec.obj
+                if obj and obj.Parent then
+                    pcall(function() obj.Enabled = rec.was end)
+                    n = n + 1
+                end
+            end
+            effectRecords, effectSeen = {}, {}
+            return n
+        end
+    end
+
+    -- ===== 材质 =====
+    local function simplifyOne(part)
+        if not part:IsA("BasePart") then return end
+        if materialSeen[part] then return end
+        local okMat, mat = pcall(function() return part.Material end)
+        if not okMat then return end
+        materialSeen[part] = true
+        table.insert(materialRecords, { obj = part, mat = mat })
+        pcall(function() part.Material = Enum.Material.SmoothPlastic end)
+    end
+
+    local function applyMaterials(on)
+        PERF.Materials = on
+        if on then
+            for _, obj in ipairs(workspace:GetDescendants()) do simplifyOne(obj) end
+            return 0
+        else
+            local n = 0
+            for _, rec in ipairs(materialRecords) do
+                local part = rec.obj
+                if part and part.Parent then
+                    pcall(function() part.Material = rec.mat end)
+                    n = n + 1
+                end
+            end
+            materialRecords, materialSeen = {}, {}
+            return n
+        end
+    end
+
+    workspace.DescendantAdded:Connect(function(obj)
+        if PERF.Materials then
+            task.defer(function()
+                if obj and obj.Parent and PERF.Materials then simplifyOne(obj) end
+            end)
+        end
+    end)
+
+    -- ===== 水面 =====
+    local function applyWater(on)
+        PERF.Water = on
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if not terrain then return 0 end
+
+        if on then
+            if not waterRecord then
+                waterRecord = {
+                    WaveSize     = terrain.WaterWaveSize,
+                    WaveSpeed    = terrain.WaterWaveSpeed,
+                    Reflectance  = terrain.WaterReflectance,
+                    Transparency = terrain.WaterTransparency,
+                }
+            end
+            pcall(function()
+                terrain.WaterWaveSize     = 0
+                terrain.WaterWaveSpeed    = 0
+                terrain.WaterReflectance  = 0
+                terrain.WaterTransparency = 1
+            end)
+            return 0
+        elseif waterRecord then
+            pcall(function()
+                terrain.WaterWaveSize     = waterRecord.WaveSize
+                terrain.WaterWaveSpeed    = waterRecord.WaveSpeed
+                terrain.WaterReflectance  = waterRecord.Reflectance
+                terrain.WaterTransparency = waterRecord.Transparency
+            end)
+            waterRecord = nil
+            return 1
+        end
+        return 0
+    end
+
+    -- ===== 还原 =====
+    local function restoreAll()
+        local nPart = applyParticles(false)
+        local nFx   = applyEffects(false)
+        local nMat  = applyMaterials(false)
+        local nWtr  = applyWater(false)
+        applyShadows(false)
+
+        N("还原完成", string.format("粒子 %d / 特效 %d / 材质 %d / 水面 %d",
+            nPart, nFx, nMat, nWtr), 4)
+    end
+
+    -- ===== 界面 =====
+    local PG_FPS_L = FPSTab:AddLeftGroupbox({ Name = "降质项", Icon = "zap" })
+    local PG_FPS_R = FPSTab:AddRightGroupbox({ Name = "批量与说明", Icon = "sliders" })
+
+    PG_FPS_L:CreateToggle({
+        Name = "关闭所有粒子",
+        CurrentValue = false,
+        Flag = "FPSParticle",
+        Callback = function(v) applyParticles(v) end,
+    })
+
+    PG_FPS_L:CreateToggle({
+        Name = "关闭阴影",
+        CurrentValue = false,
+        Flag = "FPSShadow",
+        Callback = function(v) applyShadows(v) end,
+    })
+
+    PG_FPS_L:CreateToggle({
+        Name = "关闭后处理",
+        CurrentValue = false,
+        Flag = "FPSEffect",
+        Callback = function(v) applyEffects(v) end,
+    })
+
+    PG_FPS_L:CreateToggle({
+        Name = "材质简化",
+        CurrentValue = false,
+        Flag = "FPSMaterial",
+        Callback = function(v) applyMaterials(v) end,
+    })
+
+    PG_FPS_L:CreateToggle({
+        Name = "水面简化",
+        CurrentValue = false,
+        Flag = "FPSWater",
+        Callback = function(v) applyWater(v) end,
+    })
+
+    PG_FPS_R:CreateButton({
+        Name = "一键全开降质",
+        Callback = function()
+            applyParticles(true)
+            applyShadows(true)
+            applyEffects(true)
+            applyMaterials(true)
+            applyWater(true)
+            N("性能", "已全量降质", 2)
+        end,
+    })
+
+    PG_FPS_R:CreateButton({
+        Name = "一键全部还原",
+        Callback = restoreAll,
+    })
+
+    PG_FPS_R:CreateButton({
+        Name = "功能说明",
+        Callback = function()
+            N("性能说明",
+              "关闭粒子：烟雾/火花/拖尾/光束，提帧最明显\n" ..
+              "关闭阴影：室外白天明显\n" ..
+              "关闭后处理：大气/泛光/景深/光晕\n" ..
+              "材质简化：全部换平滑塑料，画面变平但GPU压力直降\n" ..
+              "水面简化：关波浪和反射\n" ..
+              "还原会逐项回滚并报出实际数量", 8)
+        end,
+    })
+end
 -- ==========================================
 -- 设置 Tab（中文）
 -- ==========================================
