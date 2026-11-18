@@ -121,10 +121,7 @@ do
     Players.PlayerAdded:Connect(chk)
 end
 
-Library:Notify({Title="问题",Content="有问题bug联系作者",Type="Info",Duration=20})
-Library:Notify({Title="纸飞机",Content="@you25801",Type="Info",Duration=60})
-Library:Notify({Title="更新",Content="性能优化 + 合并hook + 帧率无关",Type="Success",Duration=15})
-
+Library:Notify({Title="更新",Content="2026/11/18优化辅助瞄准",Type="Success",Duration=15})
 -- ==========================================
 -- 玩家 Tab
 -- ==========================================
@@ -1347,6 +1344,7 @@ do
         local A={
             Enabled=false,Part="Body",SX=2.7,SY=1,PX=2.8,PY=2.6,
             IgTeam=true,Camp="全部",Wall=true,
+            IgDowned=false, IgCivilian=false,
             ShowFOV=false,FOVR=250,FOVFix=true,FOVC=Color3.fromRGB(190,120,255),FOVT=1.5,FOVA=0.3,FOVS=64,
         }
         local orig=AAM.Step
@@ -1361,13 +1359,62 @@ do
         end
         RunService.RenderStepped:Connect(function() pcall(upCir) end)
 
-        local function camp(p) if not p then return nil end; local t=p:GetAttribute("currentTeam"); if type(t)=="string" then return t end; if p.Team then return p.Team.Name end; return nil end
-        local function isTeam(p) if p==LP then return true end; local a,b=camp(LP),camp(p); if a==nil or b==nil then return p.Team~=nil and p.Team==LP.Team end; return a==b end
+        local function camp(p)
+            if not p then return "civilian" end
+            local t = p:GetAttribute("currentTeam")
+            if type(t) == "string" and t ~= "" then return string.lower(t) end
+            if p.Team then
+                local tn = string.lower(p.Team.Name)
+                if tn:find("police") then return "police" end
+                if tn:find("syndicate") or tn:find("criminal") or tn:find("gang") then return "syndicate" end
+                return "civilian"
+            end
+            return "civilian"
+        end
+        
+        local function isTeam(p)
+            if p==LP then return true end
+            local a,b=camp(LP),camp(p)
+            return a==b
+        end
+        
         local function allow(p)
             if _G.WL and _G.WL[p.Name] == true then return false end
-            if A.Camp~="全部" then local c=camp(p); if A.Camp=="仅警察" and c~="police" then return false end; if A.Camp=="仅帮派" and c~="syndicate" then return false end; if A.Camp=="仅平民" and c~="civilian" then return false end; return true end
-            if A.IgTeam and isTeam(p) then return false end; return true
+
+            local c = camp(p)
+            local isPol = (c == "police")
+            local isSyn = (c == "syndicate")
+            local isCiv = not (isPol or isSyn)
+
+            -- 平民不瞄
+            if A.IgCivilian and isCiv then return false end
+
+            -- ⭐ 倒地/血量不瞄准（低于200不瞄）
+            if A.IgDowned then
+                local ph = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+                if ph then
+                    if ph.Health < 200 then 
+                        return false 
+                    end
+                end
+                
+                local dn = p:GetAttribute("isDowned") or p:GetAttribute("knocked") or p:GetAttribute("crawling")
+                if dn == true then return false end
+            end
+
+            -- 阵营过滤
+            if A.Camp~="全部" then 
+                if A.Camp=="仅警察" and not isPol then return false end
+                if A.Camp=="仅帮派" and not isSyn then return false end
+                if A.Camp=="仅平民" and not isCiv then return false end
+                return true 
+            end
+            
+            -- 队伍过滤
+            if A.IgTeam and isTeam(p) then return false end
+            return true
         end
+
         local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=true
         local function wall(p)
             if not p or not p.Parent then return true end
@@ -1435,23 +1482,23 @@ do
             end
         })
 
-local hotkeyMap = {
-    ["无"]=nil,
-    ["R"]=Enum.KeyCode.R, ["T"]=Enum.KeyCode.T, ["Y"]=Enum.KeyCode.Y,
-    ["G"]=Enum.KeyCode.G, ["H"]=Enum.KeyCode.H, ["B"]=Enum.KeyCode.B,
-    ["N"]=Enum.KeyCode.N, ["M"]=Enum.KeyCode.M, ["J"]=Enum.KeyCode.J,
-    ["K"]=Enum.KeyCode.K, ["L"]=Enum.KeyCode.L, ["P"]=Enum.KeyCode.P,
-    ["U"]=Enum.KeyCode.U, ["O"]=Enum.KeyCode.O,
-    ["F1"]=Enum.KeyCode.F1, ["F2"]=Enum.KeyCode.F2, ["F3"]=Enum.KeyCode.F3,
-    ["F4"]=Enum.KeyCode.F4,
-}
-local currentHotkey = nil
-PG_Aim_L:CreateDropdown({
-    Name="快捷键开关",
-    Options={"无","R","T","Y","G","H","B","N","M","J","K","L","P","U","O","F1","F2","F3","F4"},
-    CurrentOption="无",AllowNone=false,Flag="AimHotkey",
-    Callback=function(v) currentHotkey = hotkeyMap[v] end
-})
+        local hotkeyMap = {
+            ["无"]=nil,
+            ["R"]=Enum.KeyCode.R, ["T"]=Enum.KeyCode.T, ["Y"]=Enum.KeyCode.Y,
+            ["G"]=Enum.KeyCode.G, ["H"]=Enum.KeyCode.H, ["B"]=Enum.KeyCode.B,
+            ["N"]=Enum.KeyCode.N, ["M"]=Enum.KeyCode.M, ["J"]=Enum.KeyCode.J,
+            ["K"]=Enum.KeyCode.K, ["L"]=Enum.KeyCode.L, ["P"]=Enum.KeyCode.P,
+            ["U"]=Enum.KeyCode.U, ["O"]=Enum.KeyCode.O,
+            ["F1"]=Enum.KeyCode.F1, ["F2"]=Enum.KeyCode.F2, ["F3"]=Enum.KeyCode.F3,
+            ["F4"]=Enum.KeyCode.F4,
+        }
+        local currentHotkey = nil
+        PG_Aim_L:CreateDropdown({
+            Name="快捷键开关",
+            Options={"无","R","T","Y","G","H","B","N","M","J","K","L","P","U","O","F1","F2","F3","F4"},
+            CurrentOption="无",AllowNone=false,Flag="AimHotkey",
+            Callback=function(v) currentHotkey = hotkeyMap[v] end
+        })
         UIS.InputBegan:Connect(function(input, gp)
             if gp then return end
             if currentHotkey and input.KeyCode == currentHotkey then
@@ -1464,16 +1511,23 @@ PG_Aim_L:CreateDropdown({
         PG_Aim_L:CreateSlider({Name="垂直速度",Range={0.1,5},Increment=0.1,CurrentValue=1,Flag="AimSY",Callback=function(v) A.SY=v end})
         PG_Aim_L:CreateSlider({Name="水平预判",Range={0,7},Increment=0.01,CurrentValue=2.8,Flag="AimPX",Callback=function(v) A.PX=v end})
         PG_Aim_L:CreateSlider({Name="垂直预判",Range={0,7},Increment=0.01,CurrentValue=2.6,Flag="AimPY",Callback=function(v) A.PY=v end})
+        
         PG_Aim_R:CreateToggle({Name="显示FOV圈",CurrentValue=false,Flag="AimFOV",Callback=function(v) A.ShowFOV=v; upCir() end})
         PG_Aim_R:CreateToggle({Name="屏幕中心固定",CurrentValue=true,Flag="AimFOVFix",Callback=function(v) A.FOVFix=v; upCir() end})
         PG_Aim_R:CreateSlider({Name="FOV半径",Range={20,1000},Increment=5,CurrentValue=250,Flag="AimFOVR",Callback=function(v) A.FOVR=v; upCir() end})
         PG_Aim_R:CreateSlider({Name="线条粗细",Range={1,8},Increment=1,CurrentValue=2,Flag="AimFOVT",Callback=function(v) A.FOVT=v; upCir() end})
         PG_Aim_R:CreateSlider({Name="透明度",Range={0,1},Increment=0.05,CurrentValue=0.3,Flag="AimFOVA",Callback=function(v) A.FOVA=v; upCir() end})
         PG_Aim_R:CreateDropdown({Name="圈颜色",Options={"紫","红","绿","蓝","白","黄"},CurrentOption="紫",AllowNone=false,Flag="AimFOVC",Callback=function(v) local M={["紫"]=Color3.fromRGB(190,120,255),["红"]=Color3.fromRGB(255,80,80),["绿"]=Color3.fromRGB(80,255,120),["蓝"]=Color3.fromRGB(80,160,255),["白"]=Color3.fromRGB(255,255,255),["黄"]=Color3.fromRGB(255,220,80)}; A.FOVC=M[v] or M["紫"]; upCir() end})
+        
         PG_Aim_R:CreateToggle({Name="忽略队友(仅全部)",CurrentValue=true,Flag="AimIgTeam",Callback=function(v) A.IgTeam=v end})
+        
+        PG_Aim_R:CreateToggle({Name="倒地不瞄准",CurrentValue=false,Flag="AimIgDowned",Callback=function(v) A.IgDowned=v end})
+        PG_Aim_R:CreateToggle({Name="平民不瞄准(强扫)",CurrentValue=false,Flag="AimIgCivilian",Callback=function(v) A.IgCivilian=v end})
+        
         PG_Aim_R:CreateDropdown({Name="只吸附阵营",Options={"全部","仅警察","仅帮派","仅平民"},CurrentOption="全部",AllowNone=false,Flag="AimCamp",Callback=function(v) A.Camp=v end})
         PG_Aim_R:CreateToggle({Name="掩体检测",CurrentValue=true,Flag="AimWall",Callback=function(v) A.Wall=v end})
 
+        -- 白名单
         local PG_Aim_WL = AimTab:AddRightGroupbox({Name="白名单",Icon="shield"})
         _G.WL = _G.WL or {}
         local AimWL_Created = {}
