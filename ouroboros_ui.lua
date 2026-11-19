@@ -220,7 +220,6 @@ end
 PG_Main_R1:CreateToggle({Name="飞行模式",CurrentValue=false,Flag="FlyMode",Callback=function(v) if v then startFly(); N("飞行","已开启") else stopFly(); N("飞行","已关闭") end end})
 PG_Main_R1:CreateSlider({Name="飞行速度",Range={50,400},Increment=10,CurrentValue=150,Flag="FlySpeed",Callback=function(v) FlySpeed=v end})
 
-local PG_Main_R2 = MainTab:AddRightGroupbox({Name="特殊功能",Icon="star"})
 local SpinOn,SpinSpeed,SpinConn=false,5,nil
 local function StartSpin()
     if SpinConn then return end
@@ -232,8 +231,48 @@ local function StartSpin()
     end)
 end
 LP.CharacterAdded:Connect(function() if SpinOn then task.wait(0.5); StartSpin() end end)
-PG_Main_R2:CreateToggle({Name="人物自转",CurrentValue=false,Flag="Spin",Callback=function(v) SpinOn=v; if v then StartSpin() else if SpinConn then SpinConn:Disconnect(); SpinConn=nil end end end})
-PG_Main_R2:CreateSlider({Name="旋转速度",Range={1,200},Increment=5,CurrentValue=5,Flag="SpinSpeed",Callback=function(v) SpinSpeed=v end})
+local PG_Main_R2 = MainTab:AddRightGroupbox({Name="特殊功能",Icon="star"})
+
+local SpinOn, SpinSpeed = false, 300
+local SpinConn = nil
+local spinPhase = 0
+
+local function StartSpin()
+    if SpinConn then return end
+    local c = LP.Character
+    if not c then return end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    -- 关掉自动旋转，不让游戏重置朝向
+    if h then pcall(function() h.AutoRotate = false end) end
+
+    SpinConn = RunService.RenderStepped:Connect(function(dt)
+        if not SpinOn then return end
+        local cc = LP.Character
+        if not cc then return end
+        local hrp = cc:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        -- 自己累加角度，这样就不会被游戏的重置搞慢
+        spinPhase = (spinPhase + SpinSpeed * dt) % 360
+        hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, math.rad(spinPhase), 0)
+    end)
+end
+
+local function StopSpin()
+    SpinOn = false
+    if SpinConn then SpinConn:Disconnect(); SpinConn = nil end
+    local c = LP.Character
+    if not c then return end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    if h then pcall(function() h.AutoRotate = true end) end
+    if hrp then pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end) end
+end
+
+LP.CharacterAdded:Connect(function() if SpinOn then task.wait(0.5); StartSpin() end end)
+
+PG_Main_R2:CreateToggle({Name="人物自转",CurrentValue=false,Flag="Spin",Callback=function(v) SpinOn=v; if v then StartSpin() else StopSpin() end end})
+PG_Main_R2:CreateSlider({Name="旋转速度",Range={30, 3000},Increment=30,CurrentValue=300,Flag="SpinSpeed",Callback=function(v) SpinSpeed=v end})
 
 -- 头部缩放：CharacterAdded 绑定，设一次，不每帧写
 local HS={Enabled=false,Size=1,Orig={}}
@@ -466,19 +505,40 @@ PG_Flup_L:CreateButton({
 -- ==========================================
 -- 统一范围模块（双样式 + 原始属性备份 + 范围Tab白名单）
 -- ==========================================
-local RangeA = {Enabled=false, Size=8, Transparency=1,    Material=Enum.Material.ForceField} -- 防录屏:透明,全体生效
-local RangeB = {Enabled=false, Size=8, Transparency=0.85, Material=Enum.Material.Neon}        -- 范围Tab:半透明,仅白名单生效
+-- ==========================================
+-- 统一范围模块（双样式 + 颜色预设 + 原始属性备份 + 范围Tab白名单）
+-- ==========================================
+local RangeA = {Enabled=false, Size=8, Transparency=1,    Color=Color3.fromRGB(190,190,190), Material=Enum.Material.ForceField} -- 防录屏:全体生效
+local RangeB = {Enabled=false, Size=8, Transparency=0.85, Color=Color3.fromRGB(190,190,190), Material=Enum.Material.Neon}       -- 范围Tab:仅白名单生效
+
+-- 颜色预设
+local RANGE_COLORS = {
+    ["透明"] = { Color = Color3.fromRGB(190,190,190), Transparency = 1,    Material = Enum.Material.ForceField },
+    ["红色"] = { Color = Color3.fromRGB(255, 60, 60), Transparency = 0.5, Material = Enum.Material.Neon },
+    ["绿色"] = { Color = Color3.fromRGB(60, 255, 60),  Transparency = 0.5, Material = Enum.Material.Neon },
+    ["蓝色"] = { Color = Color3.fromRGB(60, 120, 255), Transparency = 0.5, Material = Enum.Material.Neon },
+    ["黄色"] = { Color = Color3.fromRGB(255, 230, 60), Transparency = 0.5, Material = Enum.Material.Neon },
+    ["紫色"] = { Color = Color3.fromRGB(180, 60, 255), Transparency = 0.5, Material = Enum.Material.Neon },
+    ["白色"] = { Color = Color3.fromRGB(255, 255, 255), Transparency = 0.5, Material = Enum.Material.Neon },
+}
+local RANGE_COLOR_OPTIONS = { "透明", "红色", "绿色", "蓝色", "黄色", "紫色", "白色" }
+
+local function applyRangeColorPreset(cfg, colorName)
+    local c = RANGE_COLORS[colorName]
+    if not c then return end
+    cfg.Color        = c.Color
+    cfg.Transparency = c.Transparency
+    cfg.Material     = c.Material
+end
 
 local rangeConns = {}
-local RangeOrig  = {}                     -- [hrp] = 原始属性备份
-_G.RangeWL       = _G.RangeWL or {}       -- 范围白名单: [玩家名] = true
+local RangeOrig  = {}
+_G.RangeWL       = _G.RangeWL or {}
 
--- 是否命中白名单
 local function isWL(p)
     return p ~= nil and _G.RangeWL[p.Name] == true
 end
 
--- 备份原始属性（只备份一次）
 local function saveOrig(hrp)
     if RangeOrig[hrp] then return end
     RangeOrig[hrp] = {
@@ -494,12 +554,11 @@ local function applyRangePart(hrp, s, cfg)
     saveOrig(hrp)
     hrp.Size         = Vector3.new(s,s,s)
     hrp.Transparency = cfg.Transparency
-    hrp.Color        = Color3.fromRGB(190,190,190)
+    hrp.Color        = cfg.Color or Color3.fromRGB(190,190,190)
     hrp.Material     = cfg.Material
     hrp.CanCollide   = false
 end
 
--- 还原为原始值（修复白色方块）
 local function resetRangePart(hrp)
     local o = RangeOrig[hrp]
     if not o then return end
@@ -511,19 +570,18 @@ local function resetRangePart(hrp)
     RangeOrig[hrp]   = nil
 end
 
--- 单玩家应用 / 还原
 local function applyRangeToPlayer(p, cfg)
     if not p or p==LP or not p.Character then return end
     local h = p.Character:FindFirstChild("HumanoidRootPart")
     if h then pcall(applyRangePart, h, math.clamp(cfg.Size,1,100), cfg) end
 end
+
 local function resetRangeToPlayer(p)
     if not p or p==LP or not p.Character then return end
     local h = p.Character:FindFirstChild("HumanoidRootPart")
     if h then pcall(resetRangePart, h) end
 end
 
--- 全体应用：RangeA 全员 / RangeB 仅白名单
 local function applyRangeAll(cfg)
     for _,p in ipairs(Players:GetPlayers()) do
         if p~=LP then
@@ -542,7 +600,6 @@ local function resetRangeAll()
     end
 end
 
--- 玩家重生时按各自状态恢复
 local function bindRangePlayer(p)
     if p==LP then return end
     if rangeConns[p] then rangeConns[p]:Disconnect() end
@@ -564,13 +621,13 @@ Players.PlayerRemoving:Connect(function(p)
     if p.Character then RangeOrig[p.Character:FindFirstChild("HumanoidRootPart")] = nil end
 end)
 
--- 互斥开关
 local function setRangeA(on)
     if on==RangeA.Enabled then return end
     RangeA.Enabled = on
     if on then RangeB.Enabled=false; applyRangeAll(RangeA)
     else resetRangeAll() end
 end
+
 local function setRangeB(on)
     if on==RangeB.Enabled then return end
     RangeB.Enabled = on
@@ -586,7 +643,7 @@ local function setRangeB(on)
 end
 
 -- ==========================================
--- 防录屏 Tab 范围控件（透明,全体生效）
+-- 防录屏 Tab 范围控件（全体生效）
 -- ==========================================
 PG_Flup_L:CreateToggle({
     Name = "开启范围",
@@ -594,7 +651,8 @@ PG_Flup_L:CreateToggle({
     Flag = "Flup_BT_Enable",
     Callback = function(state)
         setRangeA(state)
-        if state then N("范围","已开启(透明·全体)",3) else N("范围","已关闭",3) end
+        if state then N("范围","已开启("..(RangeA.Color==Color3.fromRGB(190,190,190) and "透明" or "上色").."·全体)",3)
+        else N("范围","已关闭",3) end
     end,
 })
 
@@ -607,16 +665,36 @@ PG_Flup_R:CreateSlider({
     end,
 })
 
+PG_Flup_R:CreateDropdown({
+    Name = "范围颜色",
+    Options = RANGE_COLOR_OPTIONS,
+    CurrentOption = "透明",
+    AllowNone = false,
+    Flag = "Flup_BT_Color",
+    Callback = function(v)
+        applyRangeColorPreset(RangeA, v)
+        if RangeA.Enabled then applyRangeAll(RangeA) end
+        if v == "透明" then
+            N("范围颜色", "已切回透明(防录屏)", 3)
+        else
+            N("范围颜色", "已切到 " .. v .. "（全体玩家可见）", 3)
+        end
+    end,
+})
+
 PG_Flup_R:CreateButton({
     Name = "功能说明",
     Callback = function()
         N("防录屏/范围说明",
-          "1. 删除防录屏用于清理本地核心脚本。\n2. 开启范围后，敌人碰撞箱隐形放大（完全透明），作用于全体玩家。\n3. 范围 Tab 的白名单仅控制范围 Tab，不影响此处。",6)
+          "1. 删除防录屏用于清理本地核心脚本。\n"..
+          "2. 开启范围后，敌人碰撞箱放大，作用于全体玩家。\n"..
+          "3. 颜色选「透明」= 隐形防录屏；选其它颜色 = 自己看得到碰撞箱，视觉上方便判断。\n"..
+          "4. 范围 Tab 的白名单仅控制范围 Tab，不影响此处。",8)
     end,
 })
 
 -- ==========================================
--- 范围 Tab 控件（半透明,仅白名单生效）
+-- 范围 Tab 控件（仅白名单生效）
 -- ==========================================
 local PG_Range_L = RangeTab:AddLeftGroupbox({Name="范围",Icon="move"})
 local PG_Range_R = RangeTab:AddRightGroupbox({Name="参数",Icon="sliders"})
@@ -636,7 +714,20 @@ PG_Range_R:CreateSlider({
     Callback=function(v)
         RangeB.Size=v
         if RangeB.Enabled then applyRangeAll(RangeB) end
-    end
+    end,
+})
+
+PG_Range_R:CreateDropdown({
+    Name = "范围颜色",
+    Options = RANGE_COLOR_OPTIONS,
+    CurrentOption = "透明",
+    AllowNone = false,
+    Flag = "Range_Color",
+    Callback = function(v)
+        applyRangeColorPreset(RangeB, v)
+        if RangeB.Enabled then applyRangeAll(RangeB) end
+        N("范围颜色", "白名单范围颜色 → " .. v, 3)
+    end,
 })
 
 -- ==========================================
@@ -662,7 +753,6 @@ local function wlAdd(plr)
             _G.RangeWL = _G.RangeWL or {}
             if v then
                 _G.RangeWL[name] = true
-                -- 范围已开启时立即对该玩家生效
                 if RangeA.Enabled then
                     applyRangeToPlayer(plr, RangeA)
                 elseif RangeB.Enabled then
@@ -670,7 +760,6 @@ local function wlAdd(plr)
                 end
             else
                 _G.RangeWL[name] = nil
-                -- 取消勾选立即还原
                 resetRangeToPlayer(plr)
             end
         end
@@ -703,7 +792,6 @@ PG_Range_WL:CreateButton({
         N("范围白名单","已刷新")
     end
 })
-
 -- ==========================================
 -- 枪无后座 Tab
 -- ==========================================
