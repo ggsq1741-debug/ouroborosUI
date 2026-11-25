@@ -1,5 +1,5 @@
 local SCRIPT_NAME = "港猫的通缉Wanted"
-local SCRIPT_VERSION = "v6.0"
+local SCRIPT_VERSION = "v7.1"
 
 local imgUrl = "https://raw.githubusercontent.com/ggsq1741-debug/cQ/refs/heads/main/6979f443-2573-4441-a216-64c1eb2ee5df.png"
 local fileName = "ouro_toggle_img.png"
