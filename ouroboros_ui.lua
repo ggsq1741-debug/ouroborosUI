@@ -508,8 +508,55 @@ PG_Flup_L:CreateButton({
 -- ==========================================
 -- 统一范围模块（双样式 + 颜色预设 + 原始属性备份 + 范围Tab白名单）
 -- ==========================================
-local RangeA = {Enabled=false, Size=8, Transparency=1,    Color=Color3.fromRGB(190,190,190), Material=Enum.Material.ForceField} -- 防录屏:全体生效
-local RangeB = {Enabled=false, Size=8, Transparency=0.85, Color=Color3.fromRGB(190,190,190), Material=Enum.Material.Neon}       -- 范围Tab:仅白名单生效
+local RangeA = {
+    Enabled = false, Size = 8, Transparency = 1,
+    Color = Color3.fromRGB(190,190,190), Material = Enum.Material.ForceField,
+    Camp = "全部", DebugAlpha = nil,
+} -- 防录屏:全体生效
+local RangeB = {
+    Enabled = false, Size = 8, Transparency = 0.85,
+    Color = Color3.fromRGB(190,190,190), Material = Enum.Material.Neon,
+    Camp = "全部", DebugAlpha = nil,
+} -- 范围Tab:仅白名单生效
+
+-- ===== 阵营判定 =====
+local CAMP_OPTIONS = { "全部", "仅警察", "仅辛迪加", "仅平民" }
+local CAMP_KEY = {
+    ["全部"]     = nil,
+    ["仅警察"]   = "police",
+    ["仅辛迪加"] = "syndicate",
+    ["仅平民"]   = "civilian",
+}
+
+local function getCamp(p)
+    if not p then return "civilian" end
+    local t
+    pcall(function() t = p:GetAttribute("currentTeam") end)
+    if t == "police" or t == "cop" then return "police" end
+    if t == "syndicate" or t == "gang" or t == "criminal" then return "syndicate" end
+    if type(t) == "string" and t ~= "" then
+        local low = string.lower(t)
+        if string.find(low, "police", 1, true) or string.find(low, "cop", 1, true) then return "police" end
+        if string.find(low, "syndicate", 1, true) or string.find(low, "gang", 1, true)
+           or string.find(low, "criminal", 1, true) then return "syndicate" end
+    end
+    return "civilian"
+end
+
+local function campMatch(p, camp)
+    if camp == nil or camp == "全部" then return true end
+    local want = CAMP_KEY[camp]
+    if want == nil then return true end
+    return getCamp(p) == want
+end
+
+-- ===== 透明度：DebugAlpha 优先 =====
+local function effectiveTransparency(cfg)
+    if type(cfg.DebugAlpha) == "number" then
+        return math.clamp(cfg.DebugAlpha, 0, 1)
+    end
+    return cfg.Transparency
+end
 
 -- 颜色预设
 local RANGE_COLORS = {
@@ -550,16 +597,30 @@ local function saveOrig(hrp)
     }
 end
 
+-- 写入状态缓存：避免每 2 秒重复写属性（减少同步流量 + 降低被盯风险）
+local AppliedState = {}   -- [hrp] = {s=,t=,c=,m=}
+
 local function applyRangePart(hrp, s, cfg)
     saveOrig(hrp)
+    local t = effectiveTransparency(cfg)
+    local c = cfg.Color or Color3.fromRGB(190,190,190)
+    local m = cfg.Material
+
+    local st = AppliedState[hrp]
+    if st and st.s == s and st.t == t and st.c == c and st.m == m then
+        return   -- 完全一致，不重写
+    end
+    AppliedState[hrp] = { s = s, t = t, c = c, m = m }
+
     hrp.Size         = Vector3.new(s,s,s)
-    hrp.Transparency = cfg.Transparency
-    hrp.Color        = cfg.Color or Color3.fromRGB(190,190,190)
-    hrp.Material     = cfg.Material
+    hrp.Transparency = t
+    hrp.Color        = c
+    hrp.Material     = m
     hrp.CanCollide   = false
 end
 
 local function resetRangePart(hrp)
+    AppliedState[hrp] = nil
     local o = RangeOrig[hrp]
     if not o then return end
     hrp.Size         = o.Size
@@ -585,10 +646,15 @@ end
 local function applyRangeAll(cfg)
     for _,p in ipairs(Players:GetPlayers()) do
         if p~=LP then
+            local pass = campMatch(p, cfg.Camp)
             if cfg == RangeB then
-                if isWL(p) then applyRangeToPlayer(p, cfg) end
-            else
+                pass = pass and isWL(p)
+            end
+            if pass then
                 applyRangeToPlayer(p, cfg)
+            else
+                -- 阵营不符 / 不在白名单：还原，避免切阵营后残留
+                resetRangeToPlayer(p)
             end
         end
     end
@@ -600,26 +666,101 @@ local function resetRangeAll()
     end
 end
 
+-- 对单个玩家应用当前生效的范围（含阵营判定 + 不符则还原）
+local function applyForPlayer(p)
+    if not p or p == LP then return end
+    local ch = p.Character
+    local h = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not h then return end
+
+    if RangeA.Enabled and campMatch(p, RangeA.Camp) then
+        pcall(applyRangePart, h, math.clamp(RangeA.Size,1,100), RangeA)
+    elseif RangeB.Enabled and isWL(p) and campMatch(p, RangeB.Camp) then
+        pcall(applyRangePart, h, math.clamp(RangeB.Size,1,100), RangeB)
+    else
+        pcall(resetRangePart, h)
+    end
+end
+
+-- 监听阵营属性变化，同步后立即重算
+local teamConns = {}
+local function bindTeamWatch(p)
+    if p == LP then return end
+    if teamConns[p] then
+        pcall(function() teamConns[p]:Disconnect() end)
+        teamConns[p] = nil
+    end
+    pcall(function()
+        teamConns[p] = p:GetAttributeChangedSignal("currentTeam"):Connect(function()
+            task.wait(0.15)
+            applyForPlayer(p)
+        end)
+    end)
+end
+
 local function bindRangePlayer(p)
-    if p==LP then return end
-    if rangeConns[p] then rangeConns[p]:Disconnect() end
+    if p == LP then return end
+    if rangeConns[p] then pcall(function() rangeConns[p]:Disconnect() end) end
+
+    -- 重生
     rangeConns[p] = p.CharacterAdded:Connect(function()
-        task.wait(1)
-        local h = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-        if not h then return end
-        if RangeA.Enabled then
-            pcall(applyRangePart, h, math.clamp(RangeA.Size,1,100), RangeA)
-        elseif RangeB.Enabled and isWL(p) then
-            pcall(applyRangePart, h, math.clamp(RangeB.Size,1,100), RangeB)
+        task.wait(1.0)
+        applyForPlayer(p)
+        task.wait(0.8)
+        applyForPlayer(p)
+        task.wait(1.2)
+        applyForPlayer(p)
+    end)
+
+    bindTeamWatch(p)
+
+    -- 关键修复：新玩家加入时 Character 已存在，CharacterAdded 不会再触发
+    -- 分四拍尝试，等 currentTeam 属性与 Character 复制完成
+    task.spawn(function()
+        task.wait(0.4)
+        applyForPlayer(p)
+        task.wait(1.0)
+        applyForPlayer(p)
+        task.wait(1.5)
+        applyForPlayer(p)
+        task.wait(2.5)
+        applyForPlayer(p)
+    end)
+end
+
+-- 全量补漏：范围开关开着时，每 2 秒扫一遍，新进场 / 复活 / 换阵营都能自愈
+local rangeSweep = nil
+local function startRangeSweep()
+    if rangeSweep then return end
+    rangeSweep = task.spawn(function()
+        while true do
+            task.wait(2)
+            if RangeA.Enabled or RangeB.Enabled then
+                for _,p in ipairs(Players:GetPlayers()) do
+                    if p ~= LP then applyForPlayer(p) end
+                end
+            end
         end
     end)
 end
 
 for _,p in ipairs(Players:GetPlayers()) do bindRangePlayer(p) end
-Players.PlayerAdded:Connect(bindRangePlayer)
-Players.PlayerRemoving:Connect(function(p)
-    if p.Character then RangeOrig[p.Character:FindFirstChild("HumanoidRootPart")] = nil end
+
+Players.PlayerAdded:Connect(function(p)
+    bindRangePlayer(p)
+    startRangeSweep()
 end)
+
+Players.PlayerRemoving:Connect(function(p)
+    if teamConns[p] then pcall(function() teamConns[p]:Disconnect() end); teamConns[p] = nil end
+    if rangeConns[p] then pcall(function() rangeConns[p]:Disconnect() end); rangeConns[p] = nil end
+    if p.Character then
+        local h = p.Character:FindFirstChild("HumanoidRootPart")
+        if h then RangeOrig[h] = nil end
+    end
+end)
+
+startRangeSweep()
 
 local function setRangeA(on)
     if on==RangeA.Enabled then return end
@@ -651,7 +792,8 @@ PG_Flup_L:CreateToggle({
     Flag = "Flup_BT_Enable",
     Callback = function(state)
         setRangeA(state)
-        if state then N("范围","已开启("..(RangeA.Color==Color3.fromRGB(190,190,190) and "透明" or "上色").."·全体)",3)
+        if state then
+            N("范围", "已开启 · 阵营 " .. tostring(RangeA.Camp or "全部"), 3)
         else N("范围","已关闭",3) end
     end,
 })
@@ -682,14 +824,57 @@ PG_Flup_R:CreateDropdown({
     end,
 })
 
+PG_Flup_R:CreateDropdown({
+    Name = "生效阵营",
+    Options = CAMP_OPTIONS,
+    CurrentOption = "全部",
+    AllowNone = false,
+    Flag = "Flup_BT_Camp",
+    Callback = function(v)
+        RangeA.Camp = v
+        if RangeA.Enabled then applyRangeAll(RangeA) end
+        N("范围阵营", "防录屏范围 → " .. v, 3)
+    end,
+})
+
+PG_Flup_R:CreateToggle({
+    Name = "调试透明度",
+    CurrentValue = false,
+    Flag = "Flup_BT_DbgTgl",
+    Callback = function(on)
+        RangeA.DebugAlpha = on and 0.5 or nil
+        if RangeA.Enabled then applyRangeAll(RangeA) end
+        if on then
+            N("调试透明度", "已开启，当前 50%", 3)
+        else
+            N("调试透明度", "已关闭，回到颜色预设", 3)
+        end
+    end,
+})
+
+PG_Flup_R:CreateSlider({
+    Name = "透明度数值",
+    Range = {0,100}, Increment = 5, CurrentValue = 50,
+    Flag = "Flup_BT_DbgVal",
+    Callback = function(v)
+        if RangeA.DebugAlpha ~= nil then
+            RangeA.DebugAlpha = v / 100
+            if RangeA.Enabled then applyRangeAll(RangeA) end
+        end
+    end,
+})
+
 PG_Flup_R:CreateButton({
     Name = "功能说明",
     Callback = function()
         N("防录屏/范围说明",
           "1. 删除防录屏用于清理本地核心脚本。\n"..
-          "2. 开启范围后，敌人碰撞箱放大，作用于全体玩家。\n"..
-          "3. 颜色选「透明」= 隐形防录屏；选其它颜色 = 自己看得到碰撞箱，视觉上方便判断。\n"..
-          "4. 范围 Tab 的白名单仅控制范围 Tab，不影响此处。",8)
+          "2. 开启范围后，敌碰撞箱放大，作用于全体玩家。\n"..
+          "3. 颜色选「透明」= 隐形防录屏；选其它颜色 = 自己看得到碰撞箱。\n"..
+          "4. 生效阵营：只放大指定阵营（仅警察 / 仅辛迪加 / 仅平民），切阵营自动还原。\n"..
+          "5. 调试透明度：开关打开后忽略颜色预设，用下方滑条自定透明度。\n"..
+          "6. 新玩家加入 / 复活 / 换阵营会自愈，无需重开开关。\n"..
+          "7. 范围 Tab 的白名单仅控制范围 Tab，不影响此处。",9)
     end,
 })
 
@@ -727,6 +912,46 @@ PG_Range_R:CreateDropdown({
         applyRangeColorPreset(RangeB, v)
         if RangeB.Enabled then applyRangeAll(RangeB) end
         N("范围颜色", "白名单范围颜色 → " .. v, 3)
+    end,
+})
+
+PG_Range_R:CreateDropdown({
+    Name = "生效阵营",
+    Options = CAMP_OPTIONS,
+    CurrentOption = "全部",
+    AllowNone = false,
+    Flag = "Range_Camp",
+    Callback = function(v)
+        RangeB.Camp = v
+        if RangeB.Enabled then applyRangeAll(RangeB) end
+        N("范围阵营", "白名单范围 → " .. v, 3)
+    end,
+})
+
+PG_Range_R:CreateToggle({
+    Name = "调试透明度",
+    CurrentValue = false,
+    Flag = "Range_DbgTgl",
+    Callback = function(on)
+        RangeB.DebugAlpha = on and 0.5 or nil
+        if RangeB.Enabled then applyRangeAll(RangeB) end
+        if on then
+            N("调试透明度", "已开启，当前 50%", 3)
+        else
+            N("调试透明度", "已关闭，回到颜色预设", 3)
+        end
+    end,
+})
+
+PG_Range_R:CreateSlider({
+    Name = "透明度数值",
+    Range = {0,100}, Increment = 5, CurrentValue = 50,
+    Flag = "Range_DbgVal",
+    Callback = function(v)
+        if RangeB.DebugAlpha ~= nil then
+            RangeB.DebugAlpha = v / 100
+            if RangeB.Enabled then applyRangeAll(RangeB) end
+        end
     end,
 })
 
@@ -832,6 +1057,10 @@ local W = {
     RateOverride = 0,
     UnlockFire   = false,
     NoRecoil     = false,
+    Rapid        = false,
+    RapidPerFrame = 10,
+    SkipChamber  = true,
+    RapidStat    = 0,
 }
 
 local stat = { tool = "-", mode = "-", ammo = "-", shoot = "-" }
@@ -992,6 +1221,91 @@ local function unlockShooter(sh)
     end
 end
 
+
+local rapidOrigin = setmetatable({}, { __mode = "k" })
+
+-- 不改 fireDebounce：游戏自己每帧那次 _shoot 保持原速，命中判定配额留给我们的循环
+-- 只做两件事：跳过上膛、记录 overrideChamber 原值供还原
+local function rapidPrep(tool, shooter)
+    if type(tool) ~= "table" then return end
+    if not rapidOrigin[tool] then
+        rapidOrigin[tool] = { overrideChamber = tool.overrideChamber }
+    end
+    if W.SkipChamber then
+        pcall(function() tool.overrideChamber = true end)
+        pcall(function()
+            if type(tool.toolState) == "table" then
+                tool.toolState.chambered = true
+            end
+        end)
+    end
+end
+
+local function rapidRestore(tool)
+    if type(tool) ~= "table" then return end
+    local o = rapidOrigin[tool]
+    if not o then return end
+    pcall(function() tool.overrideChamber = o.overrideChamber end)
+    rapidOrigin[tool] = nil
+end
+
+-- 单帧内连打
+-- tool.shooting 就是玩家开火键的按下状态（MS-Input#7 / _inputPrimary 写它）
+-- 只有它为 true（手指按着）才连打，松手立刻停。不碰这个值。
+local function rapidBurst(tool, shooter, count)
+    if type(shooter) ~= "table" then return 0 end
+    if type(tool) ~= "table" then return 0 end
+
+    -- 闸门：玩家必须自己按着开火键
+    if tool.shooting ~= true then return 0 end
+
+    local fn = shooter._shoot
+    if type(fn) ~= "function" then return -1 end
+
+    local maxChamber = tonumber(count) or 1
+    if maxChamber < 1 then maxChamber = 1 end
+    if maxChamber > 60 then maxChamber = 60 end
+
+    if type(tool.toolState) == "table" and W.SkipChamber then
+        tool.toolState.chambered = true
+    end
+
+    local fired = 0
+    local mag = tool.ammoData and tool.ammoData.magSize
+
+    for i = 1, maxChamber do
+        -- 每轮开头重读，玩家松手就立刻停（_shoot 不再被叫）
+        if tool.shooting ~= true then break end
+
+        -- 弹匣空且没开无限子弹，停手让游戏自己走换弹
+        local a = shooter.ammo
+        if type(a) == "number" and a <= 0 and not W.InfAmmo then break end
+
+        -- 归零上一发的时间戳，让 _shoot 里的 fireDebounce 判断放行
+        shooter.lastShot = 0
+        if type(shooter.lastFire) == "number" then shooter.lastFire = 0 end
+        if type(tool.toolState) == "table" and W.SkipChamber then
+            tool.toolState.chambered = true
+        end
+
+        local ok = pcall(fn, shooter)
+        if not ok then break end
+        fired = fired + 1
+
+        -- 无限子弹：只在需要时补满，不介入 shooting 状态
+        if W.InfAmmo and type(mag) == "number" and mag > 0 then
+            shooter.ammo = mag
+            if type(tool.toolState) == "table" then
+                pcall(function() tool.toolState.ammo = mag end)
+            end
+        end
+    end
+
+    -- 不写 tool.shooting。_shoot 内部若因空弹把它置 false 就保持 false，
+    -- 松手时 _inputPrimary 会自己写 false。任何情况下都不由我们赋值。
+    return fired
+end
+
 --// 6. 主循环维护
 local wasAuto = false
 
@@ -1028,6 +1342,15 @@ RunService.Heartbeat:Connect(function()
 
     if rateOn then applyRate(shooter) end
     if W.UnlockFire then unlockShooter(shooter) end
+
+    -- 瞬发：仅在按住开火键时一帧内连打；松手不动作
+    if W.Rapid then
+        rapidPrep(tool, shooter)
+        local n = rapidBurst(tool, shooter, W.RapidPerFrame)
+        W.RapidStat = (type(n) == "number") and n or 0
+    else
+        rapidRestore(tool)
+    end
 
     if W.NoRecoil then
         pcall(function()
@@ -1114,6 +1437,34 @@ PG_Qiang_R1:CreateSlider({
     Callback = function(v)
         W.RateOverride = v > 0 and (v / 1000) or 0
         N("射速强制", v > 0 and (v .. " ms") or "已关闭", 3)
+    end,
+})
+
+PG_Qiang_R1:CreateToggle({
+    Name = "瞬发·按住清空",
+    CurrentValue = false,
+    Flag = "W_Rapid",
+    Callback = function(v)
+        W.Rapid = v
+        if not v then
+            local t = getTool()
+            if t then rapidRestore(t) end
+            N("瞬发", "已关闭，射速还原", 3)
+        else
+            N("瞬发", "已开启 · 按住开火键清空弹匣（每帧 " .. tostring(W.RapidPerFrame) .. " 发）", 4)
+        end
+    end,
+})
+
+PG_Qiang_R1:CreateSlider({
+    Name = "每帧弹数",
+    Range = { 1, 10 },
+    Increment = 1,
+    CurrentValue = 10,
+    Flag = "W_RapidPerFrame",
+    Callback = function(v)
+        W.RapidPerFrame = math.clamp(math.floor(v), 1, 10)
+        N("瞬发", "每帧 " .. W.RapidPerFrame .. " 发", 2)
     end,
 })
 
